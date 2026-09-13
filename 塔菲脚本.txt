@@ -1,4 +1,17 @@
-local SECRET_KEY = "697683309"
+--[[
+    免责声明:
+      本脚本仅供学习、交流与研究使用，严禁用于任何非法目的。脚本不保证完整性、准确性或适用性，使用者需自行承担因使用本脚本而产生的一切风险与后果。使用脚本可能违反相关游戏或平台的服务条款，请在使用前仔细阅读并遵守相关规定。
+]]
+
+local __d = {145,185,220,0,39,71,108,142,188}
+local __s = table.concat((function()
+    local t = {}
+    for __i = 1, #__d do
+        t[__i] = string.char((__d[__i] - 37 * (__i - 1) - 91) % 256)
+    end
+    return t
+end)())
+local SECRET_KEY = __s
 
 local Players = game:GetService("Players")
 
@@ -6,7 +19,140 @@ local player = Players.LocalPlayer
 
 local playerGui = player:WaitForChild("PlayerGui")
 
--- ===== 密钥界面 =====
+-- ===== 主题配置 =====
+local THEME = {
+    bg        = Color3.fromRGB(24, 26, 34),
+    bg2       = Color3.fromRGB(16, 17, 23),
+    panel     = Color3.fromRGB(32, 35, 46),
+    panel2    = Color3.fromRGB(26, 28, 37),
+    accent    = Color3.fromRGB(88, 152, 255),
+    accent2   = Color3.fromRGB(120, 90, 255),
+    ok        = Color3.fromRGB(60, 200, 120),
+    warn      = Color3.fromRGB(255, 176, 70),
+    err       = Color3.fromRGB(232, 76, 92),
+    text      = Color3.fromRGB(233, 236, 244),
+    subtext   = Color3.fromRGB(140, 148, 168),
+    line      = Color3.fromRGB(48, 52, 66),
+}
+
+-- ===== 通用组件工具 =====
+
+-- 圆角
+local function corner(parent, r)
+    local o = Instance.new("UICorner")
+    o.CornerRadius = UDim.new(0, r or 8)
+    o.Parent = parent
+    return o
+end
+
+-- 描边
+local function stroke(parent, color, thick, trans)
+    local o = Instance.new("UIStroke")
+    o.Color = color or THEME.line
+    o.Thickness = thick or 1
+    o.Transparency = trans or 0.2
+    o.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    o.Parent = parent
+    return o
+end
+
+-- 投影 (纯 Frame 描边实现, 无贴图依赖, 不会出现透明底图残留)
+local function shadow(parent, trans, circular)
+    local BASE = trans or 0.72
+    -- 用 3 层向外均匀扩散的描边模拟柔和投影
+    for i = 1, 3 do
+        local o = Instance.new("Frame")
+        o.Name = "__shadow" .. i
+        o.AnchorPoint = Vector2.new(0.5, 0.5)
+        -- 圆形: 同心扩散; 矩形: 轻微下移模拟光源
+        o.Position = circular and UDim2.new(0.5, 0, 0.5, 0)
+                     or UDim2.new(0.5, 0, 0.5, 1 + i)
+        o.Size = UDim2.new(1, i * 4, 1, i * 4)
+        o.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        o.BackgroundTransparency = math.min(0.95, BASE + (i - 1) * 0.08)
+        o.BorderSizePixel = 0
+        o.ZIndex = (parent.ZIndex or 1) - 1
+        o.Parent = parent
+
+        local c = Instance.new("UICorner")
+        -- 圆形对象用全圆角, 矩形对象用固定圆角
+        c.CornerRadius = circular and UDim.new(1, 0) or UDim.new(0, 14 + i * 3)
+        c.Parent = o
+    end
+    return nil
+end
+
+-- 渐变
+local function gradient(parent, c1, c2, rot)
+    local o = Instance.new("UIGradient")
+    o.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, c1),
+        ColorSequenceKeypoint.new(1, c2)
+    }
+    o.Rotation = rot or 45
+    o.Parent = parent
+    return o
+end
+
+-- 内边距
+local function padding(parent, all)
+    local o = Instance.new("UIPadding")
+    o.PaddingTop = UDim.new(0, all)
+    o.PaddingBottom = UDim.new(0, all)
+    o.PaddingLeft = UDim.new(0, all)
+    o.PaddingRight = UDim.new(0, all)
+    o.Parent = parent
+    return o
+end
+
+-- 补间动画
+local TweenService = game:GetService("TweenService")
+local function tween(obj, time, props, style)
+    local info = TweenInfo.new(
+        time or 0.18,
+        style or Enum.EasingStyle.Quad,
+        Enum.EasingDirection.Out
+    )
+    local t = TweenService:Create(obj, info, props)
+    t:Play()
+    return t
+end
+
+-- 交互反馈 (悬停/按下)
+local function interactive(btn, normalColor, hoverColor, pressColor)
+    btn.AutoButtonColor = false
+    -- 记录基准尺寸, 避免反复按下/离开造成偏移累积
+    local baseSize = btn.Size
+    local pressed = false
+
+    btn.MouseEnter:Connect(function()
+        if not pressed then
+            tween(btn, 0.14, { BackgroundColor3 = hoverColor })
+        end
+    end)
+    btn.MouseLeave:Connect(function()
+        if pressed then
+            pressed = false
+            tween(btn, 0.12, { Size = baseSize })
+        end
+        tween(btn, 0.14, { BackgroundColor3 = normalColor })
+    end)
+    btn.MouseButton1Down:Connect(function()
+        pressed = true
+        if pressColor then
+            tween(btn, 0.06, { BackgroundColor3 = pressColor })
+        end
+        tween(btn, 0.08, {
+            Size = UDim2.new(baseSize.X.Scale, baseSize.X.Offset,
+                             baseSize.Y.Scale, baseSize.Y.Offset + 2)
+        })
+    end)
+    btn.MouseButton1Up:Connect(function()
+        pressed = false
+        tween(btn, 0.12, { BackgroundColor3 = hoverColor })
+        tween(btn, 0.12, { Size = baseSize })
+    end)
+end
 
 local keyGui = Instance.new("ScreenGui")
 
@@ -14,15 +160,37 @@ keyGui.Name = "KeySystem"
 
 keyGui.ResetOnSpawn = false
 
-keyGui.Parent = playerGui
+keyGui.IgnoreGuiInset = true
+
+keyGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+-- 密钥界面永远置顶: 极大的 DisplayOrder, 并优先挂到受保护的 CoreGui 层
+keyGui.DisplayOrder = 2147483000
+
+local keyParent = playerGui
+pcall(function()
+    if gethui then
+        keyParent = gethui()
+    end
+end)
+keyGui.Parent = keyParent
+
+-- 半透明遮罩
+local keyOverlay = Instance.new("Frame")
+keyOverlay.Size = UDim2.new(1, 0, 1, 0)
+keyOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+keyOverlay.BackgroundTransparency = 0.45
+keyOverlay.BorderSizePixel = 0
+keyOverlay.ZIndex = 1
+keyOverlay.Parent = keyGui
 
 local keyFrame = Instance.new("Frame")
 
-keyFrame.Size = UDim2.new(0, 220, 0, 110)
+keyFrame.Size = UDim2.new(0, 250, 0, 170)
 
-keyFrame.Position = UDim2.new(0.5, -110, 0.5, -55)
+keyFrame.Position = UDim2.new(0.5, -125, 0.5, -85)
 
-keyFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+keyFrame.BackgroundColor3 = THEME.panel
 
 keyFrame.BorderSizePixel = 0
 
@@ -30,67 +198,84 @@ keyFrame.Active = true
 
 keyFrame.Draggable = true
 
+keyFrame.ZIndex = 2
+
 keyFrame.Parent = keyGui
 
-local keyCorner = Instance.new("UICorner")
+corner(keyFrame, 14)
+stroke(keyFrame, THEME.accent, 1.5, 0.35)
+gradient(keyFrame, Color3.fromRGB(62, 70, 96), Color3.fromRGB(16, 17, 24), 135)
+shadow(keyFrame, 0.5)
 
-keyCorner.CornerRadius = UDim.new(0, 8)
+-- 关闭按钮 (销毁密钥界面, 避免多次执行时界面叠加)
+local keyCloseButton = Instance.new("TextButton")
+keyCloseButton.Size = UDim2.new(0, 20, 0, 20)
+keyCloseButton.Position = UDim2.new(1, -26, 0, 8)
+keyCloseButton.BackgroundColor3 = Color3.fromRGB(52, 56, 70)
+keyCloseButton.TextColor3 = THEME.text
+keyCloseButton.Font = Enum.Font.GothamBold
+keyCloseButton.TextSize = 12
+keyCloseButton.Text = "✕"
+keyCloseButton.AutoButtonColor = false
+keyCloseButton.ZIndex = 4
+keyCloseButton.Parent = keyFrame
+corner(keyCloseButton, 6)
+interactive(keyCloseButton, Color3.fromRGB(52, 56, 70), THEME.err, Color3.fromRGB(200, 50, 66))
 
-keyCorner.Parent = keyFrame
-
-local keyStroke = Instance.new("UIStroke")
-
-keyStroke.Color = Color3.fromRGB(100, 150, 255)
-
-keyStroke.Thickness = 1.5
-
-keyStroke.Transparency = 0.3
-
-keyStroke.Parent = keyFrame
-
-local keyGradient = Instance.new("UIGradient")
-
-keyGradient.Color = ColorSequence.new{
-
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(45, 45, 65)),
-
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 20, 30))
-
-}
-
-keyGradient.Rotation = 45
-
-keyGradient.Parent = keyFrame
+-- 锁图标 (用文字符号, 避免 emoji 字体缺失)
+local keyIcon = Instance.new("TextLabel")
+keyIcon.Size = UDim2.new(1, 0, 0, 34)
+keyIcon.Position = UDim2.new(0, 0, 0, 12)
+keyIcon.BackgroundTransparency = 1
+keyIcon.Text = "◆"
+keyIcon.TextColor3 = THEME.accent
+keyIcon.TextSize = 20
+keyIcon.Font = Enum.Font.GothamBold
+keyIcon.ZIndex = 3
+keyIcon.Parent = keyFrame
 
 local keyTitle = Instance.new("TextLabel")
 
-keyTitle.Size = UDim2.new(1, 0, 0, 25)
+keyTitle.Size = UDim2.new(1, 0, 0, 22)
 
-keyTitle.Position = UDim2.new(0, 0, 0, 5)
+keyTitle.Position = UDim2.new(0, 0, 0, 40)
 
 keyTitle.BackgroundTransparency = 1
 
-keyTitle.TextColor3 = Color3.fromRGB(100, 180, 255)
+keyTitle.TextColor3 = THEME.text
 
 keyTitle.Font = Enum.Font.GothamBold
 
-keyTitle.TextSize = 15
+keyTitle.TextSize = 14
 
 keyTitle.Text = "请输入密钥"
 
+keyTitle.ZIndex = 3
+
 keyTitle.Parent = keyFrame
+
+local keySubtitle = Instance.new("TextLabel")
+keySubtitle.Size = UDim2.new(1, 0, 0, 16)
+keySubtitle.Position = UDim2.new(0, 0, 0, 59)
+keySubtitle.BackgroundTransparency = 1
+keySubtitle.TextColor3 = THEME.subtext
+keySubtitle.Font = Enum.Font.Gotham
+keySubtitle.TextSize = 11
+keySubtitle.Text = "输入正确密钥以解锁功能面板"
+keySubtitle.ZIndex = 3
+keySubtitle.Parent = keyFrame
 
 local keyInput = Instance.new("TextBox")
 
-keyInput.Size = UDim2.new(1, -20, 0, 30)
+keyInput.Size = UDim2.new(1, -40, 0, 30)
 
-keyInput.Position = UDim2.new(0, 10, 0, 35)
+keyInput.Position = UDim2.new(0, 20, 0, 80)
 
-keyInput.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+keyInput.BackgroundColor3 = THEME.panel2
 
-keyInput.TextColor3 = Color3.new(1, 1, 1)
+keyInput.TextColor3 = THEME.text
 
-keyInput.Font = Enum.Font.SourceSans
+keyInput.Font = Enum.Font.Gotham
 
 keyInput.TextSize = 14
 
@@ -98,57 +283,82 @@ keyInput.Text = ""
 
 keyInput.PlaceholderText = "输入密钥..."
 
+keyInput.PlaceholderColor3 = THEME.subtext
+
 keyInput.ClearTextOnFocus = false
+
+keyInput.ZIndex = 3
 
 keyInput.Parent = keyFrame
 
-local keyInputCorner = Instance.new("UICorner")
+corner(keyInput, 8)
+stroke(keyInput, THEME.line, 1, 0.2)
 
-keyInputCorner.CornerRadius = UDim.new(0, 5)
-
-keyInputCorner.Parent = keyInput
+-- 输入聚焦高亮
+keyInput.Focused:Connect(function()
+    tween(keyInput, 0.15, { BackgroundColor3 = Color3.fromRGB(38, 42, 56) })
+end)
+keyInput.FocusLost:Connect(function()
+    tween(keyInput, 0.15, { BackgroundColor3 = THEME.panel2 })
+end)
 
 local keyButton = Instance.new("TextButton")
 
-keyButton.Size = UDim2.new(0, 100, 0, 30)
+keyButton.Size = UDim2.new(1, -40, 0, 30)
 
-keyButton.Position = UDim2.new(0.5, -50, 0, 72)
+keyButton.Position = UDim2.new(0, 20, 0, 118)
 
-keyButton.BackgroundColor3 = Color3.fromRGB(50, 120, 180)
+keyButton.BackgroundColor3 = THEME.accent
 
-keyButton.TextColor3 = Color3.new(1, 1, 1)
+keyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 
 keyButton.Font = Enum.Font.GothamBold
 
 keyButton.TextSize = 14
 
-keyButton.Text = "确认"
+keyButton.Text = "确认解锁"
 
 keyButton.AutoButtonColor = false
 
+keyButton.ZIndex = 3
+
 keyButton.Parent = keyFrame
 
-local keyButtonCorner = Instance.new("UICorner")
+corner(keyButton, 8)
+gradient(keyButton, THEME.accent, THEME.accent2, 0)
+interactive(keyButton, THEME.accent, Color3.fromRGB(108, 168, 255), Color3.fromRGB(70, 130, 230))
 
-keyButtonCorner.CornerRadius = UDim.new(0, 5)
+-- 状态提示
+local keyStatus = Instance.new("TextLabel")
+keyStatus.Size = UDim2.new(1, -40, 0, 12)
+keyStatus.Position = UDim2.new(0, 20, 0, 152)
+keyStatus.BackgroundTransparency = 1
+keyStatus.TextColor3 = THEME.err
+keyStatus.Font = Enum.Font.Gotham
+keyStatus.TextSize = 11
+keyStatus.Text = ""
+keyStatus.TextXAlignment = Enum.TextXAlignment.Left
+keyStatus.ZIndex = 3
+keyStatus.Parent = keyFrame
 
-keyButtonCorner.Parent = keyButton
-
-local keyButtonStroke = Instance.new("UIStroke")
-
-keyButtonStroke.Color = Color3.fromRGB(100, 180, 255)
-
-keyButtonStroke.Thickness = 1
-
-keyButtonStroke.Transparency = 0.3
-
-keyButtonStroke.Parent = keyButton
-
--- ===== 密钥验证 =====
+-- 入场动画
+keyFrame.BackgroundTransparency = 1
+keyFrame.Position = UDim2.new(0.5, -125, 0.5, -66)
+tween(keyFrame, 0.35, {
+    BackgroundTransparency = 0,
+    Position = UDim2.new(0.5, -125, 0.5, -85)
+}, Enum.EasingStyle.Back)
 
 local function verifyKey()
 
     if keyInput.Text == SECRET_KEY then
+
+        keyStatus.TextColor3 = THEME.ok
+        keyStatus.Text = "✔ 密钥正确，正在加载..."
+        keyButton.Text = "解锁成功"
+        tween(keyFrame, 0.25, { Position = UDim2.new(0.5, -125, 0.5, -95), BackgroundTransparency = 1 })
+
+        task.wait(0.28)
 
         keyGui:Destroy()
 
@@ -160,17 +370,53 @@ local function verifyKey()
 
         keyInput.PlaceholderText = "密钥错误，请重试"
 
-        keyInput.BackgroundColor3 = Color3.fromRGB(80, 30, 30)
+        keyStatus.Text = "✘ 密钥不正确"
 
-        task.wait(1)
+        tween(keyInput, 0.12, { BackgroundColor3 = Color3.fromRGB(80, 30, 38) })
 
-        keyInput.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+        -- 抖动反馈
+        local basePos = keyFrame.Position
+        for i = 1, 3 do
+            tween(keyFrame, 0.05, { Position = basePos + UDim2.new(0, 8, 0, 0) })
+            task.wait(0.05)
+            tween(keyFrame, 0.05, { Position = basePos - UDim2.new(0, 8, 0, 0) })
+            task.wait(0.05)
+        end
+        keyFrame.Position = basePos
+
+        task.wait(0.6)
+
+        tween(keyInput, 0.2, { BackgroundColor3 = THEME.panel2 })
+
+        keyStatus.TextColor3 = THEME.err
 
     end
 
 end
 
 keyButton.MouseButton1Click:Connect(verifyKey)
+
+-- 关闭: 销毁密钥界面 (防止重复执行导致的界面叠加)
+keyCloseButton.MouseButton1Click:Connect(function()
+    keyGui:Destroy()
+end)
+
+-- 置顶守护: 周期性确保密钥界面永远在其他 GUI 之上
+task.spawn(function()
+    while keyGui.Parent do
+        pcall(function()
+            keyGui.DisplayOrder = 2147483000
+            -- 若被挤回 PlayerGui, 重新提升到受保护的 CoreGui 层
+            if gethui then
+                local top = gethui()
+                if top and keyGui.Parent ~= top then
+                    keyGui.Parent = top
+                end
+            end
+        end)
+        task.wait(0.5)
+    end
+end)
 
 keyInput.FocusLost:Connect(function(enterPressed)
 
@@ -182,17 +428,36 @@ end)
 
 function startScript()
 
+    -- 防重入: 已有实例时不重复创建界面 (避免计数器归零与界面叠加)
+    if _G.__MinigunRunning then
+        pcall(function()
+            if _G.__MinigunToggle then _G.__MinigunToggle(true) end
+            if _G.__MinigunShow then _G.__MinigunShow() end
+        end)
+        return
+    end
+    _G.__MinigunRunning = true
+
     local MinigunAuto = false
 
-    local shootInterval = 200
+    -- 兼容旧版本可能存在的残留界面
+    pcall(function()
+        local old = playerGui:FindFirstChild("MinigunControl")
+        if old then old:Destroy() end
+    end)
 
-    local mode = 1
+    local shootInterval = 200
 
     local bulletsPerFrame = 1
 
     local runLoop = true
 
     local shootMode = "frame"
+
+    -- 发射计数器: 每 20 秒自动归零一次 (不持久化)
+    local shotCount = 0
+
+    local RESET_INTERVAL = 20
 
     local playerGui = player:WaitForChild("PlayerGui")
 
@@ -203,8 +468,6 @@ function startScript()
         local data = {
 
             shootInterval = shootInterval,
-
-            mode = mode,
 
             bulletsPerFrame = bulletsPerFrame,
 
@@ -230,8 +493,6 @@ function startScript()
 
                 if data.shootInterval then shootInterval = data.shootInterval end
 
-                if data.mode then mode = data.mode end
-
                 if data.bulletsPerFrame then bulletsPerFrame = data.bulletsPerFrame end
 
                 if data.shootMode then shootMode = data.shootMode end
@@ -252,19 +513,24 @@ function startScript()
 
     screenGui.ResetOnSpawn = false
 
+    screenGui.IgnoreGuiInset = true
+
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    -- 主界面层级低于密钥界面, 避免遮挡
+    screenGui.DisplayOrder = 100
+
     screenGui.Parent = playerGui
 
     local mainFrame = Instance.new("Frame")
 
     mainFrame.Name = "MainFrame"
 
-    mainFrame.Size = UDim2.new(0, 200, 0, 115)
+    mainFrame.Size = UDim2.new(0, 240, 0, 224)
 
-    mainFrame.Position = UDim2.new(0.5, -100, 0.5, -57)
+    mainFrame.Position = UDim2.new(0.5, -120, 0.5, -112)
 
-    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-
-    mainFrame.BackgroundTransparency = 0.15
+    mainFrame.BackgroundColor3 = THEME.panel
 
     mainFrame.BorderSizePixel = 0
 
@@ -272,37 +538,14 @@ function startScript()
 
     mainFrame.Draggable = true
 
+    mainFrame.ClipsDescendants = false
+
     mainFrame.Parent = screenGui
 
-    local gradient = Instance.new("UIGradient")
-
-    gradient.Color = ColorSequence.new{
-
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(45, 45, 65)),
-
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 20, 30))
-
-    }
-
-    gradient.Rotation = 45
-
-    gradient.Parent = mainFrame
-
-    local mainStroke = Instance.new("UIStroke")
-
-    mainStroke.Color = Color3.fromRGB(100, 150, 255)
-
-    mainStroke.Thickness = 1.5
-
-    mainStroke.Transparency = 0.3
-
-    mainStroke.Parent = mainFrame
-
-    local corner = Instance.new("UICorner")
-
-    corner.CornerRadius = UDim.new(0, 8)
-
-    corner.Parent = mainFrame
+    corner(mainFrame, 14)
+    stroke(mainFrame, THEME.accent, 1.5, 0.4)
+    gradient(mainFrame, Color3.fromRGB(62, 70, 96), Color3.fromRGB(15, 16, 22), 135)
+    shadow(mainFrame, 0.5)
 
     local uiScale = Instance.new("UIScale")
 
@@ -310,37 +553,116 @@ function startScript()
 
     uiScale.Parent = mainFrame
 
+    -- 顶部标题栏
+    local header = Instance.new("Frame")
+    header.Size = UDim2.new(1, 0, 0, 36)
+    header.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
+    header.BackgroundTransparency = 0.35
+    header.BorderSizePixel = 0
+    header.Parent = mainFrame
+    corner(header, 14)
+
+    local headerMask = Instance.new("Frame")
+    headerMask.Size = UDim2.new(1, 0, 0, 14)
+    headerMask.Position = UDim2.new(0, 0, 1, -14)
+    headerMask.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
+    headerMask.BackgroundTransparency = 0.35
+    headerMask.BorderSizePixel = 0
+    headerMask.Parent = header
+
     local statusDot = Instance.new("Frame")
 
-    statusDot.Size = UDim2.new(0, 8, 0, 8)
+    statusDot.Size = UDim2.new(0, 9, 0, 9)
 
-    statusDot.Position = UDim2.new(0, 8, 0, 8)
+    statusDot.Position = UDim2.new(0, 13, 0, 13)
 
-    statusDot.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    statusDot.BackgroundColor3 = THEME.err
 
     statusDot.BorderSizePixel = 0
 
-    statusDot.Parent = mainFrame
+    statusDot.Parent = header
 
-    local dotCorner = Instance.new("UICorner")
+    corner(statusDot, 5)
 
-    dotCorner.CornerRadius = UDim.new(1, 0)
+    local dotGlow = Instance.new("UIStroke")
+    dotGlow.Color = THEME.err
+    dotGlow.Thickness = 3
+    dotGlow.Transparency = 0.5
+    dotGlow.Parent = statusDot
 
-    dotCorner.Parent = statusDot
+    local titleText = Instance.new("TextLabel")
+    titleText.Size = UDim2.new(0, 130, 0, 18)
+    titleText.Position = UDim2.new(0, 27, 0, 9)
+    titleText.BackgroundTransparency = 1
+    titleText.Text = "MINIGUN CONTROL"
+    titleText.TextColor3 = THEME.text
+    titleText.Font = Enum.Font.GothamBold
+    titleText.TextSize = 11
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.Parent = header
 
+    -- 窗口按钮 (关闭 / 最小化)
+    local closeButton = Instance.new("TextButton")
+
+    closeButton.Size = UDim2.new(0, 20, 0, 20)
+
+    closeButton.Position = UDim2.new(1, -26, 0, 8)
+
+    closeButton.BackgroundColor3 = Color3.fromRGB(52, 56, 70)
+
+    closeButton.TextColor3 = THEME.text
+
+    closeButton.Font = Enum.Font.GothamBold
+
+    closeButton.TextSize = 13
+
+    closeButton.Text = "✕"
+
+    closeButton.AutoButtonColor = false
+
+    closeButton.Parent = header
+
+    corner(closeButton, 6)
+
+    local minButton = Instance.new("TextButton")
+
+    minButton.Size = UDim2.new(0, 20, 0, 20)
+
+    minButton.Position = UDim2.new(1, -50, 0, 8)
+
+    minButton.BackgroundColor3 = Color3.fromRGB(52, 56, 70)
+
+    minButton.TextColor3 = THEME.text
+
+    minButton.Font = Enum.Font.GothamBold
+
+    minButton.TextSize = 13
+
+    minButton.Text = "▁"
+
+    minButton.AutoButtonColor = false
+
+    minButton.Parent = header
+
+    corner(minButton, 6)
+
+    interactive(closeButton, Color3.fromRGB(52, 56, 70), THEME.err, Color3.fromRGB(200, 50, 66))
+    interactive(minButton, Color3.fromRGB(52, 56, 70), Color3.fromRGB(80, 86, 104), Color3.fromRGB(64, 68, 82))
+
+    -- ===== 主开关 (大按钮) =====
     local toggleButton = Instance.new("TextButton")
 
-    toggleButton.Size = UDim2.new(1, -55, 0, 25)
+    toggleButton.Size = UDim2.new(1, -26, 0, 40)
 
-    toggleButton.Position = UDim2.new(0, 20, 0, 5)
+    toggleButton.Position = UDim2.new(0, 13, 0, 46)
 
-    toggleButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    toggleButton.BackgroundColor3 = Color3.fromRGB(58, 62, 76)
 
-    toggleButton.TextColor3 = Color3.new(1, 1, 1)
+    toggleButton.TextColor3 = THEME.text
 
-    toggleButton.Font = Enum.Font.SourceSansBold
+    toggleButton.Font = Enum.Font.GothamBold
 
-    toggleButton.TextSize = 14
+    toggleButton.TextSize = 13
 
     toggleButton.Text = "自动射击：关"
 
@@ -348,235 +670,199 @@ function startScript()
 
     toggleButton.Parent = mainFrame
 
-    local toggleCorner = Instance.new("UICorner")
-
-    toggleCorner.CornerRadius = UDim.new(0, 4)
-
-    toggleCorner.Parent = toggleButton
-
-    local closeButton = Instance.new("TextButton")
-
-    closeButton.Size = UDim2.new(0, 25, 0, 25)
-
-    closeButton.Position = UDim2.new(1, -30, 0, 5)
-
-    closeButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-
-    closeButton.TextColor3 = Color3.new(1, 1, 1)
-
-    closeButton.Font = Enum.Font.SourceSansBold
-
-    closeButton.TextSize = 12
-
-    closeButton.Text = "X"
-
-    closeButton.AutoButtonColor = false
-
-    closeButton.Parent = mainFrame
-
-    local closeCorner = Instance.new("UICorner")
-
-    closeCorner.CornerRadius = UDim.new(0, 4)
-
-    closeCorner.Parent = closeButton
-
-    local minButton = Instance.new("TextButton")
-
-    minButton.Size = UDim2.new(0, 25, 0, 25)
-
-    minButton.Position = UDim2.new(1, -58, 0, 5)
-
-    minButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-
-    minButton.TextColor3 = Color3.new(1, 1, 1)
-
-    minButton.Font = Enum.Font.SourceSansBold
-
-    minButton.TextSize = 12
-
-    minButton.Text = "─"
-
-    minButton.AutoButtonColor = false
-
-    minButton.Parent = mainFrame
-
-    local minCorner = Instance.new("UICorner")
-
-    minCorner.CornerRadius = UDim.new(0, 4)
-
-    minCorner.Parent = minButton
-
-    local intervalLabel = Instance.new("TextLabel")
-
-    intervalLabel.Size = UDim2.new(0, 70, 0, 18)
-
-    intervalLabel.Position = UDim2.new(0, 5, 0, 35)
-
-    intervalLabel.BackgroundTransparency = 1
-
-    intervalLabel.TextColor3 = Color3.new(1, 1, 1)
-
-    intervalLabel.Font = Enum.Font.SourceSansBold
-
-    intervalLabel.TextSize = 12
-
-    intervalLabel.Text = "射速(毫秒):"
-
-    intervalLabel.Parent = mainFrame
-
-    local intervalInput = Instance.new("TextBox")
-
-    intervalInput.Size = UDim2.new(0, 50, 0, 20)
-
-    intervalInput.Position = UDim2.new(0, 75, 0, 34)
-
-    intervalInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-
-    intervalInput.TextColor3 = Color3.new(1, 1, 1)
-
-    intervalInput.Font = Enum.Font.SourceSans
-
-    intervalInput.TextSize = 12
-
-    intervalInput.Text = tostring(shootInterval)
-
-    intervalInput.PlaceholderText = "无上限"
-
-    intervalInput.Parent = mainFrame
-
-    local zoomInButton = Instance.new("TextButton")
-
-    zoomInButton.Size = UDim2.new(0, 22, 0, 20)
-
-    zoomInButton.Position = UDim2.new(0, 130, 0, 34)
-
-    zoomInButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-
-    zoomInButton.TextColor3 = Color3.new(1, 1, 1)
-
-    zoomInButton.Font = Enum.Font.SourceSansBold
-
-    zoomInButton.TextSize = 12
-
-    zoomInButton.Text = "+"
-
-    zoomInButton.AutoButtonColor = false
-
-    zoomInButton.Parent = mainFrame
-
-    local zoomOutButton = Instance.new("TextButton")
-
-    zoomOutButton.Size = UDim2.new(0, 22, 0, 20)
-
-    zoomOutButton.Position = UDim2.new(0, 155, 0, 34)
-
-    zoomOutButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-
-    zoomOutButton.TextColor3 = Color3.new(1, 1, 1)
-
-    zoomOutButton.Font = Enum.Font.SourceSansBold
-
-    zoomOutButton.TextSize = 12
-
-    zoomOutButton.Text = "-"
-
-    zoomOutButton.AutoButtonColor = false
-
-    zoomOutButton.Parent = mainFrame
-
-    local bpfLabel = Instance.new("TextLabel")
-
-    bpfLabel.Size = UDim2.new(0, 70, 0, 18)
-
-    bpfLabel.Position = UDim2.new(0, 5, 0, 60)
-
-    bpfLabel.BackgroundTransparency = 1
-
-    bpfLabel.TextColor3 = Color3.new(1, 1, 1)
-
-    bpfLabel.Font = Enum.Font.SourceSansBold
-
-    bpfLabel.TextSize = 12
-
-    bpfLabel.Text = "每帧子弹:"
-
-    bpfLabel.Parent = mainFrame
-
-    local bpfInput = Instance.new("TextBox")
-
-    bpfInput.Size = UDim2.new(0, 50, 0, 20)
-
-    bpfInput.Position = UDim2.new(0, 75, 0, 59)
-
-    bpfInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-
-    bpfInput.TextColor3 = Color3.new(1, 1, 1)
-
-    bpfInput.Font = Enum.Font.SourceSans
-
-    bpfInput.TextSize = 12
-
-    bpfInput.Text = tostring(bulletsPerFrame)
-
-    bpfInput.PlaceholderText = "无上限"
-
-    bpfInput.Parent = mainFrame
-
+    corner(toggleButton, 10)
+
+    local toggleGrad = gradient(toggleButton, Color3.fromRGB(96, 104, 128), Color3.fromRGB(38, 42, 56), 90)
+
+    -- ===== 参数区 =====
+    local function makeRow(y, labelText, valueText, unit)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, -26, 0, 40)
+        row.Position = UDim2.new(0, 13, 0, y)
+        row.BackgroundColor3 = THEME.panel2
+        row.BackgroundTransparency = 0.35
+        row.BorderSizePixel = 0
+        row.Parent = mainFrame
+        corner(row, 9)
+        stroke(row, THEME.line, 1, 0.5)
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0, 86, 0, 18)
+        lbl.Position = UDim2.new(0, 12, 0, 6)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = labelText
+        lbl.TextColor3 = THEME.subtext
+        lbl.Font = Enum.Font.Gotham
+        lbl.TextSize = 11
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = row
+
+        local input = Instance.new("TextBox")
+        input.Size = UDim2.new(0, 62, 0, 22)
+        input.Position = UDim2.new(0, 10, 0, 20)
+        input.BackgroundColor3 = Color3.fromRGB(38, 41, 53)
+        input.TextColor3 = THEME.text
+        input.Font = Enum.Font.GothamBold
+        input.TextSize = 12
+        input.Text = valueText
+        input.PlaceholderText = "无上限"
+        input.PlaceholderColor3 = THEME.subtext
+        input.ClearTextOnFocus = false
+        input.Parent = row
+        corner(input, 6)
+        stroke(input, THEME.line, 1, 0.4)
+
+        return row, input
+    end
+    local row1, intervalInput = makeRow(94, "射速", tostring(shootInterval), "")
+
+    -- UI 缩放参数 (提前声明, 供步进按钮回调使用)
+    local minScale = 0.5
+    local maxScale = 2.0
+    local scaleStep = 0.1
+    local updateScaleRef = function()
+        uiScale.Scale = math.clamp(uiScale.Scale, minScale, maxScale)
+    end
+
+    -- +/- 步进按钮: 缩放整个 UI 界面
+    local function makeStep(parent, x, text, onClick)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0, 22, 0, 22)
+        b.Position = UDim2.new(0, x, 0, 20)
+        b.BackgroundColor3 = Color3.fromRGB(52, 56, 70)
+        b.TextColor3 = THEME.text
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 12
+        b.Text = text
+        b.AutoButtonColor = false
+        b.Parent = parent
+        corner(b, 6)
+        interactive(b, Color3.fromRGB(52, 56, 70), Color3.fromRGB(78, 84, 102), Color3.fromRGB(64, 68, 82))
+        b.MouseButton1Click:Connect(onClick)
+        return b
+    end
+
+    -- +/- 步进按钮: 缩放整个 UI 界面
+    makeStep(row1, 104, "−", function()
+        uiScale.Scale = uiScale.Scale - scaleStep
+        updateScaleRef()
+    end)
+    makeStep(row1, 130, "+", function()
+        uiScale.Scale = uiScale.Scale + scaleStep
+        updateScaleRef()
+    end)
+
+    -- 单位标签 (固定为毫秒, 不可切换)
     local modeButton = Instance.new("TextButton")
 
-    modeButton.Size = UDim2.new(0, 60, 0, 20)
+    modeButton.Size = UDim2.new(0, 46, 0, 22)
 
-    modeButton.Position = UDim2.new(0, 130, 0, 59)
+    modeButton.Position = UDim2.new(1, -56, 0, 20)
 
-    modeButton.BackgroundColor3 = Color3.fromRGB(50, 180, 80)
+    modeButton.BackgroundColor3 = THEME.ok
 
-    modeButton.TextColor3 = Color3.new(1, 1, 1)
+    modeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 
-    modeButton.Font = Enum.Font.SourceSansBold
+    modeButton.Font = Enum.Font.GothamBold
 
-    modeButton.TextSize = 12
+    modeButton.TextSize = 11
 
     modeButton.Text = "毫秒"
 
     modeButton.AutoButtonColor = false
 
-    modeButton.Parent = mainFrame
+    modeButton.Active = false
+
+    modeButton.Selectable = false
+
+    modeButton.Parent = row1
+
+    corner(modeButton, 6)
+
+    local row2, bpfInput = makeRow(138, "每帧子弹", tostring(bulletsPerFrame), "发/帧")
 
     local shootModeButton = Instance.new("TextButton")
 
-    shootModeButton.Size = UDim2.new(0, 80, 0, 20)
+    shootModeButton.Size = UDim2.new(0, 46, 0, 22)
 
-    shootModeButton.Position = UDim2.new(0, 5, 0, 89)
+    shootModeButton.Position = UDim2.new(1, -56, 0, 20)
 
-    shootModeButton.BackgroundColor3 = Color3.fromRGB(50, 120, 180)
+    shootModeButton.BackgroundColor3 = THEME.accent
 
-    shootModeButton.TextColor3 = Color3.new(1, 1, 1)
+    shootModeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 
-    shootModeButton.Font = Enum.Font.SourceSansBold
+    shootModeButton.Font = Enum.Font.GothamBold
 
-    shootModeButton.TextSize = 12
+    shootModeButton.TextSize = 11
 
     shootModeButton.Text = "帧模式"
 
     shootModeButton.AutoButtonColor = false
 
-    shootModeButton.Parent = mainFrame
+    shootModeButton.Parent = row2
+
+    corner(shootModeButton, 6)
+    interactive(shootModeButton, THEME.accent, Color3.fromRGB(108, 168, 255), Color3.fromRGB(70, 130, 230))
+
+    -- ===== 底部状态栏 =====
+    local statusBar = Instance.new("Frame")
+    statusBar.Size = UDim2.new(1, -26, 0, 36)
+    statusBar.Position = UDim2.new(0, 13, 0, 182)
+    statusBar.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
+    statusBar.BackgroundTransparency = 0.3
+    statusBar.BorderSizePixel = 0
+    statusBar.Parent = mainFrame
+    corner(statusBar, 9)
+    stroke(statusBar, THEME.line, 1, 0.5)
+
+    local statText = Instance.new("TextLabel")
+    statText.Size = UDim2.new(0.4, -14, 0, 16)
+    statText.Position = UDim2.new(0, 12, 0, 4)
+    statText.BackgroundTransparency = 1
+    statText.Text = "状态：待机"
+    statText.TextColor3 = THEME.err
+    statText.Font = Enum.Font.GothamBold
+    statText.TextSize = 11
+    statText.TextXAlignment = Enum.TextXAlignment.Left
+    statText.Parent = statusBar
+
+    local countText = Instance.new("TextLabel")
+    countText.Size = UDim2.new(0.58, -6, 0, 16)
+    countText.Position = UDim2.new(0.42, 0, 0, 4)
+    countText.BackgroundTransparency = 1
+    countText.Text = "发射：0"
+    countText.TextColor3 = THEME.subtext
+    countText.Font = Enum.Font.Gotham
+    countText.TextSize = 10
+    countText.TextXAlignment = Enum.TextXAlignment.Right
+    countText.Parent = statusBar
+
+    local hintText = Instance.new("TextLabel")
+    hintText.Size = UDim2.new(1, -16, 0, 14)
+    hintText.Position = UDim2.new(0, 12, 0, 19)
+    hintText.BackgroundTransparency = 1
+    hintText.Text = "F1 开关 · F2 隐藏 · [ ] 缩放"
+    hintText.TextColor3 = THEME.subtext
+    hintText.Font = Enum.Font.Gotham
+    hintText.TextSize = 10
+    hintText.TextXAlignment = Enum.TextXAlignment.Left
+    hintText.Parent = statusBar
 
     -- ===== 悬浮球 =====
 
     local floatingBall = Instance.new("TextButton")
 
-    floatingBall.Size = UDim2.new(0, 50, 0, 50)
+    floatingBall.Size = UDim2.new(0, 46, 0, 46)
 
     floatingBall.Position = UDim2.new(0.02, 0, 0.6, 0)
 
-    floatingBall.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    floatingBall.BackgroundColor3 = THEME.panel
 
     floatingBall.Text = "⚙"
 
-    floatingBall.TextColor3 = Color3.fromRGB(100, 180, 255)
+    floatingBall.TextColor3 = THEME.accent
 
-    floatingBall.TextSize = 24
+    floatingBall.TextSize = 21
 
     floatingBall.Font = Enum.Font.GothamBold
 
@@ -586,35 +872,10 @@ function startScript()
 
     floatingBall.Parent = screenGui
 
-    local ballCorner = Instance.new("UICorner")
-
-    ballCorner.CornerRadius = UDim.new(1, 0)
-
-    ballCorner.Parent = floatingBall
-
-    local ballStroke = Instance.new("UIStroke")
-
-    ballStroke.Color = Color3.fromRGB(100, 150, 255)
-
-    ballStroke.Thickness = 2
-
-    ballStroke.Transparency = 0.3
-
-    ballStroke.Parent = floatingBall
-
-    local ballGradient = Instance.new("UIGradient")
-
-    ballGradient.Color = ColorSequence.new{
-
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(50, 50, 80)),
-
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 20, 35))
-
-    }
-
-    ballGradient.Rotation = 45
-
-    ballGradient.Parent = floatingBall
+    corner(floatingBall, 23)
+    stroke(floatingBall, THEME.accent, 2, 0.35)
+    gradient(floatingBall, Color3.fromRGB(92, 120, 180), Color3.fromRGB(20, 24, 36), 135)
+    shadow(floatingBall, 0.55, true)
 
     local ballDragging = false
 
@@ -668,107 +929,17 @@ function startScript()
 
     end)
 
-    local function addHoverEffect(btn, normalColor, hoverColor)
-
-        btn.MouseEnter:Connect(function()
-
-            btn.BackgroundColor3 = hoverColor
-
-        end)
-
-        btn.MouseLeave:Connect(function()
-
-            if btn == toggleButton then
-
-                if MinigunAuto then
-
-                    btn.BackgroundColor3 = Color3.fromRGB(50, 180, 80)
-
-                else
-
-                    btn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-
-                end
-
-            else
-
-                btn.BackgroundColor3 = normalColor
-
-            end
-
-        end)
-
-    end
-
-    addHoverEffect(toggleButton, Color3.fromRGB(80, 80, 80), Color3.fromRGB(110, 110, 110))
-
-    addHoverEffect(closeButton, Color3.fromRGB(180, 50, 50), Color3.fromRGB(220, 70, 70))
-
-    addHoverEffect(minButton, Color3.fromRGB(60, 60, 60), Color3.fromRGB(90, 90, 90))
-
-    addHoverEffect(modeButton, Color3.fromRGB(50, 180, 80), Color3.fromRGB(70, 200, 100))
-
-    addHoverEffect(shootModeButton, Color3.fromRGB(50, 120, 180), Color3.fromRGB(70, 140, 200))
-
-    local minScale = 0.5
-
-    local maxScale = 2.0
-
-    local scaleStep = 0.1
-
-    local function updateScale()
-
-        uiScale.Scale = math.clamp(uiScale.Scale, minScale, maxScale)
-
-    end
-
-    zoomInButton.MouseButton1Click:Connect(function()
-
-        uiScale.Scale = uiScale.Scale + scaleStep
-
-        updateScale()
-
-    end)
-
-    zoomOutButton.MouseButton1Click:Connect(function()
-
-        uiScale.Scale = uiScale.Scale - scaleStep
-
-        updateScale()
-
-    end)
-
-    local function updateModeButton()
-
-        if mode == 1 then
-
-            modeButton.Text = "毫秒"
-
-            intervalLabel.Text = "射速(毫秒):"
-
-            modeButton.BackgroundColor3 = Color3.fromRGB(50, 180, 80)
-
-        else
-
-            modeButton.Text = "微秒"
-
-            intervalLabel.Text = "射速(微秒):"
-
-            modeButton.BackgroundColor3 = Color3.fromRGB(50, 120, 180)
-
+    -- 悬浮球轻微呼吸动画
+    task.spawn(function()
+        while runLoop do
+            tween(floatingBall, 1.2, { TextTransparency = 0.25 }, Enum.EasingStyle.Sine)
+            task.wait(1.2)
+            tween(floatingBall, 1.2, { TextTransparency = 0 }, Enum.EasingStyle.Sine)
+            task.wait(1.2)
         end
-
-    end
-
-    modeButton.MouseButton1Click:Connect(function()
-
-        if mode == 1 then mode = 2 else mode = 1 end
-
-        updateModeButton()
-
-        saveSettings()
-
     end)
+
+    -- 单位固定为毫秒: 不提供单位切换
 
     local function updateShootModeButton()
 
@@ -776,13 +947,13 @@ function startScript()
 
             shootModeButton.Text = "帧模式"
 
-            shootModeButton.BackgroundColor3 = Color3.fromRGB(50, 120, 180)
+            shootModeButton.BackgroundColor3 = THEME.accent
 
         else
 
             shootModeButton.Text = "wait模式"
 
-            shootModeButton.BackgroundColor3 = Color3.fromRGB(180, 120, 50)
+            shootModeButton.BackgroundColor3 = THEME.warn
 
         end
 
@@ -816,27 +987,38 @@ function startScript()
 
     bpfInput.FocusLost:Connect(function(ep) if ep then applyInputs() end end)
 
-    toggleButton.MouseButton1Click:Connect(function()
+    local function setToggle(on)
 
-        MinigunAuto = not MinigunAuto
+        MinigunAuto = on
 
-        if MinigunAuto then
+        if on then
 
             toggleButton.Text = "自动射击：开"
 
-            toggleButton.BackgroundColor3 = Color3.fromRGB(50, 180, 80)
-
-            statusDot.BackgroundColor3 = Color3.fromRGB(50, 220, 80)
+            tween(toggleButton, 0.2, { BackgroundColor3 = THEME.ok })
+            tween(toggleGrad, 0.2, { Rotation = 0 })
+            statusDot.BackgroundColor3 = THEME.ok
+            dotGlow.Color = THEME.ok
+            statText.Text = "状态：运行中"
+            statText.TextColor3 = THEME.ok
 
         else
 
             toggleButton.Text = "自动射击：关"
 
-            toggleButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-
-            statusDot.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            tween(toggleButton, 0.2, { BackgroundColor3 = Color3.fromRGB(58, 62, 76) })
+            dotGlow.Color = THEME.err
+            statusDot.BackgroundColor3 = THEME.err
+            statText.Text = "状态：待机"
+            statText.TextColor3 = THEME.err
 
         end
+
+    end
+
+    toggleButton.MouseButton1Click:Connect(function()
+
+        setToggle(not MinigunAuto)
 
     end)
 
@@ -847,6 +1029,8 @@ function startScript()
         runLoop = false
 
         saveSettings()
+
+        _G.__MinigunRunning = false
 
         screenGui:Destroy()
 
@@ -872,31 +1056,77 @@ function startScript()
 
     end)
 
-    if MinigunAuto then
+    -- ===== 快捷键 =====
+    local UserInputService = game:GetService("UserInputService")
 
-        toggleButton.Text = "自动射击：开"
+    UserInputService.InputBegan:Connect(function(input, processed)
 
-        toggleButton.BackgroundColor3 = Color3.fromRGB(50, 180, 80)
+        if processed then return end
 
-        statusDot.BackgroundColor3 = Color3.fromRGB(50, 220, 80)
+        if input.KeyCode == Enum.KeyCode.F1 then
 
-    else
+            setToggle(not MinigunAuto)
 
-        toggleButton.Text = "自动射击：关"
+        elseif input.KeyCode == Enum.KeyCode.F2 then
 
-        toggleButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+            mainFrame.Visible = not mainFrame.Visible
 
-        statusDot.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            floatingBall.Visible = not mainFrame.Visible
 
+        elseif input.KeyCode == Enum.KeyCode.LeftBracket then
+
+            uiScale.Scale = uiScale.Scale - scaleStep
+
+            updateScaleRef()
+
+        elseif input.KeyCode == Enum.KeyCode.RightBracket then
+
+            uiScale.Scale = uiScale.Scale + scaleStep
+
+            updateScaleRef()
+
+        end
+
+    end)
+
+    setToggle(MinigunAuto)
+
+    -- 对外暴露控制入口 (供重复执行脚本时复用, 不重建界面)
+    _G.__MinigunToggle = setToggle
+    _G.__MinigunShow = function()
+        pcall(function()
+            mainFrame.Visible = true
+            floatingBall.Visible = false
+        end)
     end
-
-    updateModeButton()
 
     updateShootModeButton()
 
     intervalInput.Text = tostring(shootInterval)
 
     bpfInput.Text = tostring(bulletsPerFrame)
+
+    -- ===== 统计刷新 =====
+    task.spawn(function()
+        local lastReset = os.clock()
+        while runLoop do
+            local elapsed = os.clock() - lastReset
+            local remain = math.max(0, math.ceil(RESET_INTERVAL - elapsed))
+            -- 显示发射数与下次归零倒计时
+            countText.Text = "发射：" .. tostring(shotCount) .. "  (" .. remain .. "s)"
+            -- 每 20 秒自动归零, 不持久化
+            if elapsed >= RESET_INTERVAL then
+                lastReset = os.clock()
+                shotCount = 0
+                -- 归零时闪一下作为提示
+                countText.TextColor3 = THEME.accent
+                task.delay(0.4, function()
+                    countText.TextColor3 = THEME.subtext
+                end)
+            end
+            task.wait(0.25)
+        end
+    end)
 
     -- ===== 核心射击 =====
 
@@ -912,9 +1142,7 @@ function startScript()
 
             local intervalSec
 
-            if mode == 1 then intervalSec = shootInterval / 1000
-
-            else intervalSec = shootInterval / 1000000 end
+            intervalSec = shootInterval / 1000
 
             if intervalSec <= 0 then
 
@@ -933,6 +1161,8 @@ function startScript()
                     end)
 
                 end
+
+                shotCount = shotCount + bulletsPerFrame
 
                 lastShot = tick()
 
@@ -958,6 +1188,8 @@ function startScript()
 
                     end
 
+                    shotCount = shotCount + bulletsPerFrame
+
                     lastShot = now
 
                 end
@@ -976,9 +1208,7 @@ function startScript()
 
                 local intervalSec
 
-                if mode == 1 then intervalSec = shootInterval / 1000
-
-                else intervalSec = shootInterval / 1000000 end
+                intervalSec = shootInterval / 1000
 
                 if intervalSec <= 0 then wait() else wait(intervalSec) end
 
@@ -997,6 +1227,8 @@ function startScript()
                     end)
 
                 end
+
+                shotCount = shotCount + bulletsPerFrame
 
             else
 
