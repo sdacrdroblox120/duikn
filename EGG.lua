@@ -1,25 +1,21 @@
 --[[
 ================================================================================
-  EGG  ·  防御 + 在线音乐  —  Rayfield 版 (第十九轮)
+  EGG  ·  防御 + 在线音乐  —  Obsidian 版 (第十九轮 · UI 重构)
 ================================================================================
-  ★ 本版相对第十八轮的改动 (红黑警戒主题 + 折叠收纳 + 页面重排):
-    1. ★ 新增「红黑警戒主题」: EGG_THEME_BLOOD 色表, 调 Rayfield 的 ModifyTheme
-       接口换肤 (背景#140808 / 高亮#e12d2d / 描边#3a1616 / 文字#ffebeb)。
-       未改动任何控件代码, 零兼容风险。想换风格改一行即可:
-         Window:ModifyTheme("DarkBlue")   -- 或 Amethyst / AmberGlow / Ocean ...
-    2. ★ 新增「折叠收纳」: 音乐页顶部「🗂 收起/展开」按钮, 一键收纳
-       「账号登录 + 接口设置」共 9 个低频控件, 音乐页控件数 26 -> 17, 一屏可看完。
-       实现: Rayfield 创建控件时会设 `实例.Name = 显示名`, 据此找到控件实例并切
-       .Visible; 不碰库的私有对象, Rayfield 升级不会崩。默认收起, 1.2 秒后生效。
-    3. ★ 页面重排: 「管理员防护」整块(含诊断模式) 由「配置」页搬到「防御」页;
+  ★ 本版相对第十八轮的改动 (Rayfield -> Obsidian 换库 + 页面重排):
+    1. ★ 换库: 原 Rayfield 红黑主题改为 Obsidian (Linoria 改良版) 界面框架。
+       控件 API 由 Rayfield 改为 Obsidian (CreateWindow / AddTab /
+       AddLeftGroupbox / AddToggle 等), 回调逻辑 100% 保持不变。
+       想换肤用 ThemeManager 内置主题或 ThemeManager:SetTheme(...)。
+    2. ★ 页面重排: 「管理员防护」整块(含诊断模式) 由「配置」页搬到「防御」页;
        「开启动画音效」整块由「音乐」页搬到「配置」页。
-    4. ★ 文案统一: Tab「防踢」-> 「防御」, 加载屏「防踢护盾」-> 「防御护盾」。
-    5. ★ 独立「汽水音乐」播放器脚本已删除, 功能全部并入音乐页 (见第十八轮存档)。
-  ★ 下一轮计划 (待实测后决定): 若执行器能正常加载, 迁移到 WindUI
-    (原生分区折叠 / 原生渐变 / 图片控件 / 弹窗 / 悬浮开关键)。
+    3. ★ 文案统一: Tab「防踢」-> 「防御」, 加载屏「防踢护盾」-> 「防御护盾」。
+    4. ★ 独立「汽水音乐」播放器脚本已删除, 功能全部并入音乐页 (见第十八轮存档)。
+    ⚠ 折叠收纳已移除: 原「🗂 收起/展开」依赖 Rayfield 的 `实例.Name` 反射机制,
+      Obsidian 无此机制。账号登录 / 接口设置改为音乐页常显 Groupbox (不再折叠)。
   ★ 音乐引擎依赖: 注入器需支持 writefile / getcustomasset (下载后本地播放)。
-  ★ 加载方式 (二选一, 默认用 sirius.menu 官方源):
-       local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+  ★ 加载方式 (Obsidian 官方源):
+       local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/main/Library.lua"))()
 ================================================================================
   ▼ 第十八轮 (最后一人音乐改在线曲库 + 自定义歌单 + 开启动画音效 + 独立播放器):
     1. 音乐来源: 硬编码 Roblox 音频 ID -> 在线曲库实时取歌。
@@ -70,7 +66,7 @@ local CONFIG = {
     Music_Volume        = 0.5,      -- 音乐音量(0~1)
     Music_Speed         = 1.0,      -- 音乐倍速(0.5~2.0)
     Music_CustomList    = {},       -- ★自定义歌单 (为空则随机播默认曲风)
-    -- ★踢人通知 (Rayfield 通知卡片 + 提示音)
+    -- ★踢人通知 (Obsidian 通知卡片 + 提示音)
     Kick_Notify          = true,    -- 通知总开关
     Kick_Notify_Sound    = true,    -- 提示音开关
     Kick_SoundId         = "rbxassetid://112972396921894",
@@ -97,11 +93,11 @@ local CONFIG = {
     -- ★白名单 (手动保护名单, 比好友列表可靠)
     Whitelist            = {},       -- 从配置读取, 面板可增删
 
-    -- ★显示/隐藏快捷键 (Rayfield 自带折叠条 + 此键切换窗口)
+    -- ★显示/隐藏快捷键 (Obsidian 窗口最小化 + 此键切换窗口)
     HOTKEY               = "T",
 }
 
--- ★配置文件路径 (仅持久化白名单动态数据; 其余 UI 状态由 Rayfield 自带保存)
+-- ★配置文件路径 (仅持久化白名单动态数据; 其余 UI 状态由 Obsidian 自带保存)
 local CONFIG_FILE = "EGG_config.json"
 
 --//===================================================== 状态
@@ -117,9 +113,9 @@ local STATE = {
     kickExclude    = {},        -- ★"即将离开"排除表: 票数到阈值的人临时排除, 避免白投票
 
 
-    -- ★UI 状态 (Rayfield 接管)
+    -- ★UI 状态 (Obsidian 接管)
     tab            = "combat",  -- 当前标签页
-    collapsed      = false,     -- 是否已收进标题栏 (Rayfield 折叠条)
+    collapsed      = false,     -- 是否已收进标题栏 (Obsidian 窗口最小化)
     destroyed      = false,     -- 是否已彻底销毁
 }
 
@@ -128,7 +124,7 @@ local function hasFs()
     return type(writefile) == "function" and type(readfile) == "function"
 end
 
---- 加载配置 (只恢复白名单列表; 其余 UI 状态由 Rayfield 自带 ConfigurationSaving 恢复)
+--- 加载配置 (只恢复白名单列表; 其余 UI 状态由 Obsidian 自带 ConfigurationSaving 恢复)
 local function loadConfig()
     if not hasFs() then return end
     local ok, raw = pcall(readfile, CONFIG_FILE)
@@ -152,13 +148,13 @@ local function saveConfig()
     return pcall(writefile, CONFIG_FILE, json)
 end
 
---//===================================================== ★ 通知封装 (Rayfield:Notify)
+--//===================================================== ★ 通知封装 (Obsidian:Notify)
 --
--- 保留 notify() 包装, 所有引擎/UI 调用点代码不变, 只把通知外观换成 Rayfield 卡片。
+-- 保留 notify() 包装, 所有引擎/UI 调用点代码不变, 只把通知外观换成 Obsidian 卡片。
 -- ★放在本文件前部: loadFriends/notifyKickDone/引擎/UI 都在它之后定义, 才能把它
 --   当成局部 upvalue 捕获 (Lua 局部变量作用域: 被调用函数须声明在调用者之前)。
--- Rayfield 在下方加载并赋值; 加载完成前调用会静默跳过 (不报错)。
-local Rayfield = nil
+-- Library 在下方加载并赋值; 加载完成前调用会静默跳过 (不报错)。
+local Library = nil
 KICK_NOTIFY_TEMPLATES = KICK_NOTIFY_TEMPLATES or {
     "已投票 -- %s",
     "防御护盾已成功防卫 -- %s",
@@ -167,14 +163,12 @@ KICK_NOTIFY_TEMPLATES = KICK_NOTIFY_TEMPLATES or {
 
 local function notify(title, text, duration, kind)
     duration = duration or 3
-    if not Rayfield then return end
+    if not Library then return end
     pcall(function()
-        Rayfield:Notify({
-            Title   = tostring(title or ""),
-            Content = tostring(text or ""),
-            Duration = duration,
-        })
+        Library:Notify(tostring(title or "") .. ": " .. tostring(text or ""), duration)
     end)
+    print(string.format("[EGG] [%s] %s%s", tostring(kind or "info"),
+        (title and (tostring(title) .. ": ")) or "", tostring(text or "")))
 end
 
 local function notifySimple(title, text, kind)
@@ -392,7 +386,7 @@ local function playStartupSound()
     end)
 end
 
---- ★有人投票踢我时的警告 (Rayfield 通知卡片)
+--- ★有人投票踢我时的警告 (Obsidian 通知卡片)
 local function showVoteWarning(initiatorName, votes, need)
     if not CONFIG.Warn_OnVoted then return end
     local who = initiatorName or "有人"
@@ -1156,122 +1150,11 @@ local function startLastManWatch()
     end)
 end
 
---//===================================================== ★ 折叠收纳模块 (Collapsible)
--- 原理: Rayfield 创建控件时会执行 `实例.Name = 控件的显示名` 并挂到页面容器下,
---       所以控件的 UI 实例可以按名字找到, 且它自带 .Visible 属性。
---       「折叠」= 把一组控件的实例收集起来, 统一切 Visible。
---       不改 UI 结构、不碰库的私有对象, Rayfield 升级也不会崩。
-local Fold = {}
 
---- 定位 Rayfield 的 UI 根节点 (兼容不同版本的存放位置)
---- ★ 注意: gethui() 返回的通常就是那个 ScreenGui 本身,
----   而 game.CoreGui 返回的是容器(里面装的可能是 ScreenGui, 也可能直接是 Main)。
----   所以两种形态都要判断, 否则会永远找不到。
-local function foldIsRayfieldGui(obj)
-    if not obj then return false end
-    -- 形态 A: 自身就是 Rayfield 的容器 (有 Main 子对象)
-    if obj:FindFirstChild("Main") then return true end
-    -- 形态 B: 自身是 ScreenGui 且名字带 Rayfield, 且里面有 Main
-    local ok, isGui = pcall(function() return obj:IsA("ScreenGui") end)
-    if ok and isGui and string.find(obj.Name, "Rayfield") then
-        return obj:FindFirstChild("Main") ~= nil
-    end
-    return false
-end
-
-local function foldGetRoot()
-    local candidates = {}
-    if gethui then table.insert(candidates, function() return gethui() end) end
-    if game.CoreGui then table.insert(candidates, function() return game.CoreGui end) end
-    if game.Players and game.Players.LocalPlayer then
-        table.insert(candidates, function()
-            return game.Players.LocalPlayer:WaitForChild("PlayerGui", 5)
-        end)
-    end
-
-    for _, fn in ipairs(candidates) do
-        local ok, gui = pcall(fn)
-        if ok and gui then
-            -- ① 本身即目标
-            if foldIsRayfieldGui(gui) then return gui end
-            -- ② 在子对象里找 (含递归一层, 应对嵌套容器)
-            local ok2, kids = pcall(function() return gui:GetChildren() end)
-            if ok2 and kids then
-                for _, child in ipairs(kids) do
-                    if foldIsRayfieldGui(child) then return child end
-                end
-            end
-        end
-    end
-    return nil
-end
-
---- 找到指定页签的页面容器
---- ★ 从根节点往下逐层找 Main > Elements, 并兼容"根节点本身就是 Main"的情况
-local function foldGetPage(pageName)
-    local root = foldGetRoot()
-    if not root then return nil end
-
-    -- 找到装 Main 的那一层
-    local main = root:FindFirstChild("Main")
-    if not main then
-        -- 根节点可能已经是 Elements 或 Main 的父层
-        if root.Name == "Main" then main = root end
-    end
-    if not main then return nil end
-
-    local els = main:FindFirstChild("Elements")
-    if not els then return nil end
-
-    return els:FindFirstChild(pageName)
-end
-
---- 创建一个折叠组
---- @param pageName string 页签名 (如 "音乐")
---- @param names table 要折叠的控件显示名列表
-function Fold.New(pageName, names)
-    local api = {}
-    api._pageName = pageName
-    api._names = names
-    api._visible = true
-    api._resolved = false
-    api._targets = {}
-
-    function api:_resolve()
-        if self._resolved then return true end
-        local page = foldGetPage(self._pageName)
-        if not page then return false end
-        self._targets = {}
-        for _, nm in ipairs(self._names) do
-            local inst = page:FindFirstChild(nm)
-            if inst then table.insert(self._targets, inst) end
-        end
-        self._resolved = #self._targets > 0
-        return self._resolved
-    end
-
-    function api:Set(show)
-        if not self:_resolve() then
-            task.delay(0.5, function() pcall(function() self:_resolve() end) end)
-            return false
-        end
-        for _, inst in ipairs(self._targets) do
-            pcall(function() inst.Visible = show and true or false end)
-        end
-        self._visible = show
-        return true
-    end
-
-    function api:Toggle() return self:Set(not self._visible) end
-    function api:IsVisible() return self._visible end
-    return api
-end
-
---//===================================================== 加载 Rayfield 并构建 UI
-local function loadRayfield()
+--//===================================================== 加载 Obsidian (UI 库)
+local function loadObsidian()
     local urls = {
-        "https://sirius.menu/rayfield",
-        "https://raw.githubusercontent.com/sqrt-xx/Rayfield/stable/source.lua",
+        "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/Library.lua",
     }
     for _, url in ipairs(urls) do
         local ok, lib = pcall(function()
@@ -1282,11 +1165,11 @@ local function loadRayfield()
     return nil
 end
 
-loadConfig()          -- ★先读白名单, 让白名单 Dropdown 初始选项正确
-Rayfield = loadRayfield()
-if not Rayfield then
-    warn("[EGG] Rayfield 加载失败, UI 无法显示 (后台逻辑仍运行)")
-    print("[EGG] 请检查执行器网络或手动替换 Rayfield 源")
+loadConfig()          -- ★先读白名单, 让白名单下拉初始选项正确
+Library = loadObsidian()
+if not Library then
+    warn("[EGG] Obsidian 加载失败, UI 无法显示 (后台逻辑仍运行)")
+    print("[EGG] 请检查执行器网络或手动替换 Obsidian 源")
 end
 
 --//===================================================== 反踢护盾 (Anti-Kick Shield)
@@ -1494,7 +1377,6 @@ local ExtUrlBox, ExtListDropdown, ExtRunBtn
 -- ★账号登录 / 接口设置
 local NMPhoneBox, NMCodeBox, NMSendSmsBtn, NMConfirmBtn, NMLogoutBtn
 local NMAccountPara, NMApiBox, NMQualityDropdown
-local MusicFoldBtn, MusicAdvFold   -- ★ 折叠收纳 (按钮 + 折叠对象)
 
 --//===================================================== ★ 脚本分支 (通用脚本加载器)
 -- 说明: 在主脚本里加载并运行其它脚本, 用于把大体积/低频功能从主脚本里剥离出去。
@@ -1586,880 +1468,352 @@ local function runRemoteScript(url, label, silent)
     return true
 end
 
-if Rayfield then
-    Window = Rayfield:CreateWindow({
-        Name = "EGG",
-        LoadingTitle = "EGG 🥚",
-        LoadingSubtitle = "防御护盾",
-        ConfigurationSaving = {
-            Enabled = true,
-            FolderName = "EGG",
-            FileName = "EGG_UIConfig",
-        },
-        Discord = { Enabled = false },
-        KeySystem = false,
+if Library then
+    local repoObsidian = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+    local ThemeManager = loadstring(game:HttpGet(repoObsidian .. "addons/ThemeManager.lua"))()
+    local SaveManager  = loadstring(game:HttpGet(repoObsidian .. "addons/SaveManager.lua"))()
+    local Options = Library.Options
+    local Toggles = Library.Toggles
+
+    Library.ForceCheckbox = false
+    Library.ShowToggleFrameInKeybinds = true
+
+    local Window = Library:CreateWindow({
+        Title = "EGG",
+        Footer = "防御 + 音乐",
+        Icon = 95816097006870,
+        NotifySide = "Right",
+        ShowCustomCursor = true,
     })
+    SaveManager:SetLibrary(Library)
+    SaveManager:SetFolder("EGG")
 
-    --//===================== ★ 红黑警戒主题
-    -- 直接调用 Rayfield 的 ModifyTheme 接口换肤, 不需要改任何控件代码。
-    -- 传字符串=用内置主题(Amethyst/AmberGlow/DarkBlue/Ocean/...), 传表=自定义配色。
-    -- 想换风格: 把下面 pcall 里的表换成内置主题名即可, 例如 "DarkBlue"。
-    EGG_THEME_BLOOD = {
-        TextColor        = Color3.fromRGB(255, 235, 235),
-        Background       = Color3.fromRGB(20, 8, 8),
-        Topbar           = Color3.fromRGB(28, 10, 10),
-        Shadow           = Color3.fromRGB(12, 4, 4),
-
-        NotificationBackground      = Color3.fromRGB(28, 10, 10),
-        NotificationActionsBackground = Color3.fromRGB(220, 60, 60),
-
-        TabBackground          = Color3.fromRGB(48, 18, 18),
-        TabStroke              = Color3.fromRGB(64, 24, 24),
-        TabBackgroundSelected  = Color3.fromRGB(200, 45, 45),
-        TabTextColor           = Color3.fromRGB(240, 220, 220),
-        SelectedTabTextColor   = Color3.fromRGB(255, 255, 255),
-
-        ElementBackground      = Color3.fromRGB(32, 13, 13),
-        ElementBackgroundHover = Color3.fromRGB(46, 18, 18),
-        SecondaryElementBackground = Color3.fromRGB(26, 10, 10),
-        ElementStroke          = Color3.fromRGB(58, 22, 22),
-        SecondaryElementStroke = Color3.fromRGB(48, 18, 18),
-
-        SliderBackground      = Color3.fromRGB(120, 24, 24),
-        SliderProgress        = Color3.fromRGB(225, 45, 45),
-        SliderStroke          = Color3.fromRGB(255, 80, 80),
-
-        ToggleBackground          = Color3.fromRGB(32, 13, 13),
-        ToggleEnabled             = Color3.fromRGB(200, 35, 35),
-        ToggleDisabled            = Color3.fromRGB(90, 70, 70),
-        ToggleEnabledStroke       = Color3.fromRGB(255, 70, 70),
-        ToggleDisabledStroke      = Color3.fromRGB(110, 88, 88),
-        ToggleEnabledOuterStroke  = Color3.fromRGB(120, 40, 40),
-        ToggleDisabledOuterStroke = Color3.fromRGB(70, 54, 54),
-
-        DropdownSelected   = Color3.fromRGB(40, 16, 16),
-        DropdownUnselected = Color3.fromRGB(30, 12, 12),
-
-        InputBackground = Color3.fromRGB(30, 12, 12),
-        InputStroke     = Color3.fromRGB(62, 24, 24),
-        PlaceholderColor = Color3.fromRGB(190, 140, 140),
+    local Tabs = {
+        ["防御"]     = Window:AddTab("防御", "shield"),
+        ["音乐"]     = Window:AddTab("音乐", "music"),
+        ["脚本分支"] = Window:AddTab("脚本分支", "package"),
+        ["配置"]     = Window:AddTab("配置", "settings"),
     }
-    pcall(function() Window:ModifyTheme(EGG_THEME_BLOOD) end)
-    -- 若你的 Rayfield 版本不支持自定义表, 自动退回内置红/紫主题:
-    --   pcall(function() Window:ModifyTheme("Amethyst") end)
 
-    PlayerTab   = Window:CreateTab("防御", nil)
-    MusicTab    = Window:CreateTab("音乐", nil)
-    BranchTab   = Window:CreateTab("脚本分支", nil)
-    SettingsTab = Window:CreateTab("配置", nil)
-
-    --//===================== 防御页 (玩家)
-    PlayerTab:CreateSection("🛡 踢人")
-    KickToggle = PlayerTab:CreateToggle({
-        Name = "🛡 ★ 踢人 (自动循环)",
-        CurrentValue = CONFIG.AntiKick_AutoKick,
-        Flag = "AntiKick",
+    --//===================== 防御页
+    local GB_Kick = Tabs["防御"]:AddLeftGroupbox("🛡 踢人")
+    KickToggle = GB_Kick:AddToggle("Kick", {
+        Text = "🛡 ★ 踢人 (自动循环)",
+        Default = CONFIG.AntiKick_AutoKick,
         Callback = function(v)
-            playClickSound()
-            CONFIG.AntiKick_AutoKick = v
-            CONFIG.AntiKick_Enabled  = v
-            if v then
-                startAutoKick()
-                notify("踢人", string.format("已开启 -- 每 %.1f 秒自动投票", CONFIG.AntiKick_KickInterval), 3, "success")
-            else
-                stopAutoKick()
-                notify("踢人", "已关闭", 2.5, "info")
-            end
+            playClickSound(); CONFIG.AntiKick_AutoKick = v; CONFIG.AntiKick_Enabled = v
+            if v then startAutoKick(); notify("踢人", string.format("已开启 -- 每 %.1f 秒自动投票", CONFIG.AntiKick_KickInterval), 3, "success")
+            else stopAutoKick(); notify("踢人", "已关闭", 2.5, "info") end
         end,
     })
-    KickIntSlider = PlayerTab:CreateSlider({
-        Name = "⏱ 踢人间隔",
-        Range = {0.1, 10},
-        Increment = 0.1,
-        CurrentValue = CONFIG.AntiKick_KickInterval,
-        Flag = "KickInterval",
+    KickIntSlider = GB_Kick:AddSlider("KickInterval", {
+        Text = "⏱ 踢人间隔", Default = CONFIG.AntiKick_KickInterval, Min = 0.1, Max = 10, Rounding = 1,
         Callback = function(v) playClickSound(); CONFIG.AntiKick_KickInterval = v end,
     })
 
-    --//===================== 反踢护盾 (防御性)
-    PlayerTab:CreateSection("🛡 反踢护盾")
-    PlayerTab:CreateToggle({
-        Name = "🛡 ★ 反踢护盾 (拦截踢人远程 + 反作弊调用)",
-        CurrentValue = CONFIG.AntiKick_Shield,
-        Flag = "AntiKickShield",
+    local GB_Shield = Tabs["防御"]:AddLeftGroupbox("🛡 反踢护盾")
+    GB_Shield:AddToggle("AntiKickShield", {
+        Text = "🛡 ★ 反踢护盾 (拦截踢人远程 + 反作弊调用)",
+        Default = CONFIG.AntiKick_Shield,
         Callback = function(v)
-            playClickSound()
-            CONFIG.AntiKick_Shield = v
+            playClickSound(); CONFIG.AntiKick_Shield = v
             if v then AntiKickShield.enable() else AntiKickShield.disable() end
         end,
     })
-    PlayerTab:CreateParagraph({
-        Title = "🛡 反踢护盾说明",
-        Content = "纯防御: 拦下 RequestPlayerKick 等踢人远程, 并阻断 LocalClean / CharacterControl 的本地调用, 循环禁用本机 CharacterControl。 "
-                .. "不修改任何游戏状态、不提供玩法优势。开启后控制台输入 EGG_AntiKickShield.stats() 查看拦截计数。",
+    GB_Shield:AddParagraph("🛡 反踢护盾说明",
+        "纯防御: 拦下 RequestPlayerKick 等踢人远程, 并阻断 LocalClean / CharacterControl 的本地调用, 循环禁用本机 CharacterControl。 "
+        .. "不修改任何游戏状态、不提供玩法优势。开启后控制台输入 EGG_AntiKickShield.stats() 查看拦截计数。")
+
+    local GB_Notify = Tabs["防御"]:AddLeftGroupbox("🔔 通知")
+    KickNotifyToggle = GB_Notify:AddToggle("KickNotify", {
+        Text = "🔔 ★ 踢人通知", Default = CONFIG.Kick_Notify,
+        Callback = function(v) playClickSound(); CONFIG.Kick_Notify = v; notify("踢人通知", v and "已开启" or "已关闭", 2.5, v and "success" or "info") end,
+    })
+    KickSoundToggle = GB_Notify:AddToggle("KickSound", {
+        Text = "🔊 提示音", Default = CONFIG.Kick_Notify_Sound,
+        Callback = function(v) playClickSound(); CONFIG.Kick_Notify_Sound = v; if v then playKickSound() end; notify("提示音", v and "已开启" or "已静音", 2.5, v and "success" or "info") end,
+    })
+    WarnToggle = GB_Notify:AddToggle("WarnVoted", {
+        Text = "🗳 ★ 被投票时提醒我", Default = CONFIG.Warn_OnVoted,
+        Callback = function(v) playClickSound(); CONFIG.Warn_OnVoted = v; notify("被投提醒", v and "已开启 -- 有人投你会立即提醒" or "已关闭", 2.5, v and "success" or "info") end,
     })
 
-    PlayerTab:CreateSection("🔔 通知")
-    KickNotifyToggle = PlayerTab:CreateToggle({
-        Name = "🔔 ★ 踢人通知",
-        CurrentValue = CONFIG.Kick_Notify,
-        Flag = "KickNotify",
-        Callback = function(v)
-            playClickSound()
-            CONFIG.Kick_Notify = v
-            notify("踢人通知", v and "已开启" or "已关闭", 2.5, v and "success" or "info")
-        end,
+    local GB_Admin = Tabs["防御"]:AddLeftGroupbox("🛡 管理员防护")
+    AdminLeaveToggle = GB_Admin:AddToggle("AdminAutoLeave", {
+        Text = "🛡 ★ 检测到管理员自动退出", Default = CONFIG.Admin_AutoLeave,
+        Callback = function(v) playClickSound(); CONFIG.Admin_AutoLeave = v; if v then startAdminWatch() end; notify("管理员检测", v and "已开启 -- 检测到管理员将自动退出" or "已关闭", 2.5, v and "success" or "info") end,
     })
-    KickSoundToggle = PlayerTab:CreateToggle({
-        Name = "🔊 提示音",
-        CurrentValue = CONFIG.Kick_Notify_Sound,
-        Flag = "KickSound",
+    AdminGroupBox = GB_Admin:AddInput("AdminGroupId", {
+        Text = "🆔 管理员群组 ID (留空=不按群组判定)", Default = (CONFIG.Admin_GroupId and CONFIG.Admin_GroupId ~= 0) and tostring(CONFIG.Admin_GroupId) or "",
+        Placeholder = "如 123456", Numeric = true,
         Callback = function(v)
-            playClickSound()
-            CONFIG.Kick_Notify_Sound = v
-            if v then playKickSound() end
-            notify("提示音", v and "已开启" or "已静音", 2.5, v and "success" or "info")
-        end,
-    })
-    WarnToggle = PlayerTab:CreateToggle({
-        Name = "🗳 ★ 被投票时提醒我",
-        CurrentValue = CONFIG.Warn_OnVoted,
-        Flag = "WarnVoted",
-        Callback = function(v)
-            playClickSound()
-            CONFIG.Warn_OnVoted = v
-            notify("被投提醒", v and "已开启 -- 有人投你会立即提醒" or "已关闭", 2.5, v and "success" or "info")
-        end,
-    })
-
-    --//===================== 管理员防护 (自配置页搬迁至此)
-    PlayerTab:CreateSection("🛡 管理员防护")
-    AdminLeaveToggle = PlayerTab:CreateToggle({
-        Name = "🛡 ★ 检测到管理员自动退出",
-        CurrentValue = CONFIG.Admin_AutoLeave,
-        Flag = "AdminAutoLeave",
-        Callback = function(v)
-            playClickSound()
-            CONFIG.Admin_AutoLeave = v
-            if v then startAdminWatch() end
-            notify("管理员检测", v and "已开启 -- 检测到管理员将自动退出" or "已关闭", 2.5, v and "success" or "info")
-        end,
-    })
-    AdminGroupBox = PlayerTab:CreateTextBox({
-        Name = "🆔 管理员群组 ID (留空=不按群组判定)",
-        CurrentValue = (CONFIG.Admin_GroupId and CONFIG.Admin_GroupId ~= 0) and tostring(CONFIG.Admin_GroupId) or "",
-        PlaceholderText = "如 123456",
-        ClearTextOnFocus = false,
-        Flag = "AdminGroupId",
-        Callback = function(v)
-            playClickSound()
-            local n = tonumber((v or ""):match("%d+")) or 0
-            CONFIG.Admin_GroupId = n
+            playClickSound(); local n = tonumber((v or ""):match("%d+")) or 0; CONFIG.Admin_GroupId = n
             notify("管理员检测", n > 0 and ("已设置群组 ID -- " .. n) or "已关闭群组判定", 2.5, n > 0 and "success" or "info")
         end,
     })
-    AdminNamesBox = PlayerTab:CreateTextBox({
-        Name = "📛 管理员名字名单 (逗号分隔, 精确匹配)",
-        CurrentValue = table.concat(CONFIG.Admin_Names or {}, ","),
-        PlaceholderText = "如 aaa,bbb",
-        ClearTextOnFocus = false,
-        Flag = "AdminNames",
+    AdminNamesBox = GB_Admin:AddInput("AdminNames", {
+        Text = "📛 管理员名字名单 (逗号分隔, 精确匹配)", Default = table.concat(CONFIG.Admin_Names or {}, ","),
+        Placeholder = "如 aaa,bbb",
         Callback = function(v)
-            playClickSound()
-            local list = {}
-            for name in string.gmatch(v or "", "[^,]+") do
-                name = name:match("^%s*(.-)%s*$")
-                if name ~= "" then table.insert(list, name) end
-            end
-            CONFIG.Admin_Names = list
-            notify("管理员检测", "已更新名单 -- " .. #list .. " 人", 2.5, "info")
+            playClickSound(); local list = {}
+            for name in string.gmatch(v or "", "[^,]+") do name = name:match("^%s*(.-)%s*$"); if name ~= "" then table.insert(list, name) end end
+            CONFIG.Admin_Names = list; notify("管理员检测", "已更新名单 -- " .. #list .. " 人", 2.5, "info")
         end,
     })
-    PlayerTab:CreateParagraph({
-        Title = "🛡 管理员检测说明",
-        Content = "开启后每 0.1 秒扫描全服: 命中『群组 rank ≥ 设定值 / 名字在名单 / 角色带 Admin 标记』任一即自动踢出自己。 "
-                .. "需补充本服判定依据 (群组 ID 或名字名单) 才能稳定识别, 详见聊天说明。",
-    })
-    PlayerTab:CreateToggle({
-        Name = "🩺 诊断模式 (打印管理标志到控制台)",
-        CurrentValue = CONFIG.Admin_Diagnose,
-        Flag = "AdminDiagnose",
+    GB_Admin:AddParagraph("🛡 管理员检测说明",
+        "开启后每 0.1 秒扫描全服: 命中『群组 rank ≥ 设定值 / 名字在名单 / 角色带 Admin 标记』任一即自动踢出自己。 "
+        .. "需补充本服判定依据 (群组 ID 或名字名单) 才能稳定识别, 详见聊天说明。")
+    GB_Admin:AddToggle("AdminDiagnose", {
+        Text = "🩺 诊断模式 (打印管理标志到控制台)", Default = CONFIG.Admin_Diagnose,
         Callback = function(v)
-            playClickSound()
-            CONFIG.Admin_Diagnose = v
-            if v then
-                for _, p in ipairs(Players:GetPlayers()) do
-                    task.spawn(function() diagnosePlayer(p) end)
-                end
+            playClickSound(); CONFIG.Admin_Diagnose = v
+            if v then for _, p in ipairs(Players:GetPlayers()) do task.spawn(function() diagnosePlayer(p) end) end
                 notify("管理员诊断", "已开启 -- 新进玩家信号将打印到控制台(F9)", 3, "info")
-            else
-                notify("管理员诊断", "已关闭", 2.5, "info")
-            end
+            else notify("管理员诊断", "已关闭", 2.5, "info") end
         end,
     })
 
-    --//===================== 音乐页 (最后一人)
-    MusicTab:CreateSection("🎚 音乐总开关")
-    MusicEnabledToggle = MusicTab:CreateToggle({
-        Name = "🎚 ★ 音乐开关 (总开关)",
-        CurrentValue = CONFIG.Music_Enabled,
-        Flag = "MusicEnabled",
-        Callback = function(v)
-            playClickSound()
-            CONFIG.Music_Enabled = v
-            if not v then
-                stopLastManMusic()
-                notify("音乐", "已关闭 -- 所有音乐停止", 2.5, "info")
-            else
-                notify("音乐", "已开启", 2.5, "success")
-            end
-        end,
+    --//===================== 音乐页
+    local GB_MusicMain = Tabs["音乐"]:AddLeftGroupbox("🎚 音乐总开关")
+    MusicEnabledToggle = GB_MusicMain:AddToggle("MusicEnabled", {
+        Text = "🎚 ★ 音乐开关 (总开关)", Default = CONFIG.Music_Enabled,
+        Callback = function(v) playClickSound(); CONFIG.Music_Enabled = v
+            if not v then stopLastManMusic(); notify("音乐", "已关闭 -- 所有音乐停止", 2.5, "info") else notify("音乐", "已开启", 2.5, "success") end end,
     })
 
-    --//===================== ★ 折叠收纳 (把低频的高级设置收起来)
-    MusicTab:CreateSection("🗂 收纳 (点击展开/收起高级设置)")
-    MusicFoldBtn = MusicTab:CreateButton({
-        Name = "🗂 收起 / 展开「账号登录 + 接口设置」",
-        Callback = function()
-            playClickSound()
-            if not MusicAdvFold then
-                notify("收纳", "还没准备好, 请稍后再点", 2.5, "warn")
-                return
-            end
-            MusicAdvFold:Toggle()
-            notify("收纳", MusicAdvFold:IsVisible()
-                and "已展开 -- 显示账号登录与接口设置"
-                or "已收起 -- 高级设置已隐藏", 2.5, "info")
-        end,
+    local GB_LastMan = Tabs["音乐"]:AddLeftGroupbox("🎯 最后一人音乐")
+    MusicLastManToggle = GB_LastMan:AddToggle("MusicLastMan", {
+        Text = "🎯 ★ 最后一人音乐 (队伍仅剩你时播放)", Default = CONFIG.Music_LastMan,
+        Callback = function(v) playClickSound(); CONFIG.Music_LastMan = v
+            if not v then stopLastManMusic(); notify("音乐", "已关闭 -- 最后一人音乐", 2.5, "info") else notify("音乐", "已开启 -- 队伍仅剩你一人时放音乐", 2.5, "success") end end,
     })
+    MusicVolSlider = GB_LastMan:AddSlider("MusicVolume", {
+        Text = "🔉 音乐音量", Default = CONFIG.Music_Volume, Min = 0, Max = 1, Rounding = 2,
+        Callback = function(v) playClickSound(); CONFIG.Music_Volume = v; if STATE.musicSound and STATE.musicSound.Parent then pcall(function() STATE.musicSound.Volume = v end) end end,
+    })
+    MusicSpeedSlider = GB_LastMan:AddSlider("MusicSpeed", {
+        Text = "⏩ 音乐倍速", Default = CONFIG.Music_Speed, Min = 0.5, Max = 2, Rounding = 2,
+        Callback = function(v) playClickSound(); CONFIG.Music_Speed = v; if STATE.musicSound and STATE.musicSound.Parent then pcall(function() STATE.musicSound.PlaybackSpeed = v end) end end,
+    })
+    GB_LastMan:AddButton({ Text = "🎲 试听一首 (随机点歌)", Callback = function() playClickSound(); playRandomMusic() end })
+    GB_LastMan:AddButton({ Text = "⏹ 停止音乐", Callback = function() playClickSound(); stopLastManMusic(); notify("音乐", "已停止", 2, "info") end })
+    GB_LastMan:AddParagraph("🎯 最后一人音乐说明",
+        "『音乐开关』为总开关: 关掉则任何情况都不放音乐。开『最后一人音乐』后, 当队伍里"
+        .. "『只剩你一个活人』时, 自动从『在线曲库』随机点歌并弹双通知; 一首放完自动连播下一首。本游戏一局不复活, "
+        .. "故队友加入不会关音乐, 但你阵亡会立刻停止 (绝不给别人放音乐)。")
 
-    MusicTab:CreateSection("🎯 最后一人音乐")
-    MusicLastManToggle = MusicTab:CreateToggle({
-        Name = "🎯 ★ 最后一人音乐 (队伍仅剩你时播放)",
-        CurrentValue = CONFIG.Music_LastMan,
-        Flag = "MusicLastMan",
+    local GB_Lib = Tabs["音乐"]:AddLeftGroupbox("🎧 在线曲库 (搜索/播放)")
+    NMSearchBox = GB_Lib:AddInput("NMSearch", {
+        Text = "🔍 搜索歌曲 (输入后按回车)", Default = "", Placeholder = "如 周杰伦 / phonk / 中文dj",
         Callback = function(v)
-            playClickSound()
-            CONFIG.Music_LastMan = v
-            if not v then
-                stopLastManMusic()
-                notify("音乐", "已关闭 -- 最后一人音乐", 2.5, "info")
-            else
-                notify("音乐", "已开启 -- 队伍仅剩你一人时放音乐", 2.5, "success")
-            end
-        end,
-    })
-    MusicVolSlider = MusicTab:CreateSlider({
-        Name = "🔉 音乐音量",
-        Range = {0, 1},
-        Increment = 0.05,
-        CurrentValue = CONFIG.Music_Volume,
-        Flag = "MusicVolume",
-        Callback = function(v)
-            playClickSound()
-            CONFIG.Music_Volume = v
-            if STATE.musicSound and STATE.musicSound.Parent then
-                pcall(function() STATE.musicSound.Volume = v end)
-            end
-        end,
-    })
-    MusicSpeedSlider = MusicTab:CreateSlider({
-        Name = "⏩ 音乐倍速",
-        Range = {0.5, 2},
-        Increment = 0.05,
-        CurrentValue = CONFIG.Music_Speed,
-        Flag = "MusicSpeed",
-        Callback = function(v)
-            playClickSound()
-            CONFIG.Music_Speed = v
-            if STATE.musicSound and STATE.musicSound.Parent then
-                pcall(function() STATE.musicSound.PlaybackSpeed = v end)
-            end
-        end,
-    })
-    MusicTab:CreateButton({
-        Name = "🎲 试听一首 (随机点歌)",
-        Callback = function()
-            playClickSound()
-            playRandomMusic()
-        end,
-    })
-    MusicTab:CreateButton({
-        Name = "⏹ 停止音乐",
-        Callback = function()
-            playClickSound()
-            stopLastManMusic()
-            notify("音乐", "已停止", 2, "info")
-        end,
-    })
-    MusicTab:CreateParagraph({
-        Title = "🎯 最后一人音乐说明",
-        Content = "『音乐开关』为总开关: 关掉则任何情况都不放音乐。开『最后一人音乐』后, 当队伍里"
-                .. "『只剩你一个活人』时, 自动从『在线曲库』随机点歌并弹双通知; "
-                .. "一首放完自动连播下一首, 且接下来 2 首都不会重复刚播完的那首。本游戏一局不复活, "
-                .. "故队友加入不会关音乐, 但你阵亡会立刻停止 (绝不给别人放音乐)。",
-    })
-
-    --//===================== 在线曲库 (搜索/播放)
-    MusicTab:CreateSection("🎧 在线曲库 (搜索/播放)")
-    NMSearchBox = MusicTab:CreateTextBox({
-        Name = "🔍 搜索歌曲 (输入后按回车)",
-        CurrentValue = "",
-        PlaceholderText = "如 周杰伦 / phonk / 中文dj",
-        ClearTextOnFocus = true,
-        Flag = "NMSearch",
-        Callback = function(v)
-            playClickSound()
-            if not v or v == "" then return end
+            playClickSound(); if not v or v == "" then return end
             local list = musicSearch(v, 30)
-            if #list == 0 then
-                notify("音乐", "没搜到结果 (换个词或检查网络)", 3, "warn")
-                return
-            end
-            STATE.nmResults = list
-            local names = {}
+            if #list == 0 then notify("音乐", "没搜到结果 (换个词或检查网络)", 3, "warn"); return end
+            STATE.nmResults = list; local names = {}
             for _, s in ipairs(list) do table.insert(names, s.name .. " - " .. s.artist) end
             pcall(function() NMResultDropdown:Refresh(names) end)
             notify("音乐", "搜到 " .. #list .. " 首, 下拉选择即可播放", 3, "success")
         end,
     })
-    NMResultDropdown = MusicTab:CreateDropdown({
-        Name = "📋 搜索结果 (选一首播放)",
-        Options = { "（先在上方搜索）" },
-        CurrentOption = nil,
-        Flag = "NMResult",
+    NMResultDropdown = GB_Lib:AddDropdown("NMResult", {
+        Text = "📋 搜索结果 (选一首播放)", Values = { "（先在上方搜索）" }, Default = 1,
         Callback = function(opt)
-            playClickSound()
-            if not opt or opt == "（先在上方搜索）" then return end
+            playClickSound(); if not opt or opt == "（先在上方搜索）" then return end
             local list = STATE.nmResults or {}
-            for i, s in ipairs(list) do
-                if (s.name .. " - " .. s.artist) == opt then
-                    notify("音乐", "加载中 -- " .. s.name, 2.5, "info")
-                    playNeteaseSong(s)
-                    return
-                end
-            end
+            for i, s in ipairs(list) do if (s.name .. " - " .. s.artist) == opt then notify("音乐", "加载中 -- " .. s.name, 2.5, "info"); playNeteaseSong(s); return end end
         end,
     })
-    MusicTab:CreateButton({
-        Name = "▶ 播放 / 试听 (随机默认曲风)",
-        Callback = function()
-            playClickSound()
-            playRandomMusic()
-        end,
-    })
-    MusicTab:CreateButton({
-        Name = "⏹ 停止播放",
-        Callback = function()
-            playClickSound()
-            stopLastManMusic()
-            notify("音乐", "已停止", 2, "info")
-        end,
-    })
+    GB_Lib:AddButton({ Text = "▶ 播放 / 试听 (随机默认曲风)", Callback = function() playClickSound(); playRandomMusic() end })
+    GB_Lib:AddButton({ Text = "⏹ 停止播放", Callback = function() playClickSound(); stopLastManMusic(); notify("音乐", "已停止", 2, "info") end })
 
-    --//===================== 自定义歌单
-    MusicTab:CreateSection("📀 自定义歌单 (优先播放)")
-    NMCustomBox = MusicTab:CreateTextBox({
-        Name = "➕ 添加歌曲到歌单 (输入歌名回车)",
-        CurrentValue = "",
-        PlaceholderText = "如 红色高跟鞋DJ版",
-        ClearTextOnFocus = true,
-        Flag = "NMCustomAdd",
+    local GB_Playlist = Tabs["音乐"]:AddLeftGroupbox("📀 自定义歌单 (优先播放)")
+    NMCustomBox = GB_Playlist:AddInput("NMCustomAdd", {
+        Text = "➕ 添加歌曲到歌单 (输入歌名回车)", Default = "", Placeholder = "如 红色高跟鞋DJ版",
         Callback = function(v)
-            playClickSound()
-            if not v or v == "" then return end
+            playClickSound(); if not v or v == "" then return end
             local list = musicSearch(v, 1)
-            if #list == 0 then
-                notify("歌单", "没搜到这首歌, 换个关键词", 3, "warn")
-                return
-            end
-            local song = list[1]
-            CONFIG.Music_CustomList = CONFIG.Music_CustomList or {}
-            table.insert(CONFIG.Music_CustomList, song)
-            local names = {}
-            for _, s in ipairs(CONFIG.Music_CustomList) do
-                table.insert(names, s.name .. " - " .. s.artist)
-            end
+            if #list == 0 then notify("歌单", "没搜到这首歌, 换个关键词", 3, "warn"); return end
+            local song = list[1]; CONFIG.Music_CustomList = CONFIG.Music_CustomList or {}; table.insert(CONFIG.Music_CustomList, song)
+            local names = {}; for _, s in ipairs(CONFIG.Music_CustomList) do table.insert(names, s.name .. " - " .. s.artist) end
             pcall(function() NMCustomDropdown:Refresh(names) end)
             notify("歌单", "已加入: " .. song.name .. " (共 " .. #CONFIG.Music_CustomList .. " 首)", 3, "success")
-            -- 刷新下拉当前选项
             pcall(function() NMCustomDropdown:Refresh(names, true) end)
         end,
     })
-    NMCustomDropdown = MusicTab:CreateDropdown({
-        Name = "📀 我的歌单 (选一首播放)",
-        Options = { "（歌单为空 · 将随机播默认曲风）" },
-        CurrentOption = nil,
-        Flag = "NMCustom",
+    NMCustomDropdown = GB_Playlist:AddDropdown("NMCustom", {
+        Text = "📀 我的歌单 (选一首播放)", Values = { "（歌单为空 · 将随机播默认曲风）" }, Default = 1,
         Callback = function(opt)
-            playClickSound()
-            if not opt or opt:find("歌单为空") then return end
-            for _, s in ipairs(CONFIG.Music_CustomList or {}) do
-                if (s.name .. " - " .. s.artist) == opt then
-                    notify("音乐", "加载中 -- " .. s.name, 2.5, "info")
-                    playNeteaseSong(s)
-                    return
-                end
-            end
+            playClickSound(); if not opt or opt:find("歌单为空") then return end
+            for _, s in ipairs(CONFIG.Music_CustomList or {}) do if (s.name .. " - " .. s.artist) == opt then notify("音乐", "加载中 -- " .. s.name, 2.5, "info"); playNeteaseSong(s); return end end
         end,
     })
-    MusicTab:CreateButton({
-        Name = "🗑 清空我的歌单",
-        Callback = function()
-            playClickSound()
-            CONFIG.Music_CustomList = {}
-            pcall(function() NMCustomDropdown:Refresh({ "（歌单为空 · 将随机播默认曲风）" }, true) end)
-            notify("歌单", "已清空 -- 之后随机播默认曲风", 3, "warn")
-        end,
-    })
-    MusicTab:CreateParagraph({
-        Title = "🎵 音乐引擎说明",
-        Content = "最后一人音乐由『网易云在线曲库』实时驱动, 不再使用硬编码音频 ID。"
-                .. "没添加自定义歌单时, 自动随机搜播『无敌少侠 / 高燃FUNK / phonk / 中文DJ』; "
-                .. "在『添加歌曲到歌单』里输入歌名(回车)即可存入自己的歌单, 有歌单时优先播你的歌。"
-                .. "注意: 播放需要注入器支持 writefile / getcustomasset (下载后本地播放)。",
-    })
+    GB_Playlist:AddButton({ Text = "🗑 清空我的歌单", Callback = function() playClickSound(); CONFIG.Music_CustomList = {}; pcall(function() NMCustomDropdown:Refresh({ "（歌单为空 · 将随机播默认曲风）" }, true) end); notify("歌单", "已清空 -- 之后随机播默认曲风", 3, "warn") end })
+    GB_Playlist:AddParagraph("🎵 音乐引擎说明",
+        "最后一人音乐由『网易云在线曲库』实时驱动, 不再使用硬编码音频 ID。"
+        .. "没添加自定义歌单时, 自动随机搜播『无敌少侠 / 高燃FUNK / phonk / 中文DJ』; 在『添加歌曲到歌单』里输入歌名(回车)即可存入自己的歌单, 有歌单时优先播你的歌。"
+        .. "注意: 播放需要注入器支持 writefile / getcustomasset (下载后本地播放)。")
 
-    --//===================== ★账号登录 (听 VIP 完整版)
-    MusicTab:CreateSection("🔑 账号登录 (听完整版/VIP)")
-    NMAccountPara = MusicTab:CreateParagraph({
-        Title = "当前状态: 未登录",
-        Content = "登录后可播放你账号权限内的歌曲 (含 VIP 完整版)。"
-                .. "⭐ 建议使用小号 —— cookie 会发往第三方接口服务, 请自行评估账号风险。"
-                .. "登录信息只保存在本机配置里。",
-    })
-    NMPhoneBox = MusicTab:CreateTextBox({
-        Name = "① 手机号",
-        CurrentValue = "",
-        PlaceholderText = "输入网易云绑定手机号",
-        ClearTextOnFocus = true,
-        Flag = "NMPhone",
-        Callback = function() playClickSound() end,
-    })
-    NMSendSmsBtn = MusicTab:CreateButton({
-        Name = "📨 ② 发送验证码",
-        Callback = function()
-            playClickSound()
-            local phone = ""
-            pcall(function() phone = tostring(NMPhoneBox.Value or "") end)
-            if phone == "" then notify("登录", "请先填手机号", 2.5, "warn"); return end
-            notify("登录", "正在发送验证码...", 2, "info")
-            task.spawn(function()
-                local d = musicSendSms(phone)
-                if d and not d.code then
-                    notify("登录", "验证码已发送, 请查收短信 ✅", 4, "success")
-                else
-                    notify("登录", "发送失败: " .. tostring((d and (d.message or d.msg)) or "接口无响应"), 5, "error")
-                end
-            end)
-        end,
-    })
-    NMCodeBox = MusicTab:CreateTextBox({
-        Name = "③ 验证码",
-        CurrentValue = "",
-        PlaceholderText = "输入短信收到的验证码",
-        ClearTextOnFocus = true,
-        Flag = "NMCode",
-        Callback = function() playClickSound() end,
-    })
-    NMConfirmBtn = MusicTab:CreateButton({
-        Name = "✅ ④ 登录",
-        Callback = function()
-            playClickSound()
-            local phone, code = "", ""
-            pcall(function() phone = tostring(NMPhoneBox.Value or "") end)
-            pcall(function() code  = tostring(NMCodeBox.Value or "") end)
-            if phone == "" or code == "" then notify("登录", "手机号和验证码都要填", 2.5, "warn"); return end
-            notify("登录", "正在验证...", 2, "info")
-            task.spawn(function()
-                local ok, info = musicVerifySms(phone, code)
-                if ok then
-                    notify("登录", "登录成功 🎉 正在读取账号信息", 3, "success")
-                    local v = musicQueryVip()
-                    local who = (v and v.ok and v.nickname ~= "") and v.nickname or "已登录"
-                    local tag = (v and v.ok and v.isVip) and (" ・ " .. tostring(v.vipName or "VIP")) or ""
-                    pcall(function() NMAccountPara:Set({ Title = "当前状态: " .. who .. tag,
-                        Content = "已登录, 可播放你账号权限内的歌曲。想换号点下方『退出登录』。" }) end)
-                else
-                    notify("登录", "登录失败: " .. tostring(info), 5, "error")
-                end
-            end)
-        end,
-    })
-    NMLogoutBtn = MusicTab:CreateButton({
-        Name = "🚪 退出登录 (清除 cookie)",
-        Callback = function()
-            playClickSound()
-            CONFIG.Music_Cookie = ""
-            musicSaveCookie()
-            pcall(function() NMAccountPara:Set({ Title = "当前状态: 未登录",
-                Content = "已清除本机保存的登录信息。" }) end)
-            notify("登录", "已退出登录", 2.5, "info")
-        end,
-    })
-    MusicTab:CreateButton({
-        Name = "🔄 刷新账号状态",
-        Callback = function()
-            playClickSound()
-            if CONFIG.Music_Cookie == "" then notify("登录", "当前未登录", 2.5, "warn"); return end
-            task.spawn(function()
-                local v = musicQueryVip()
-                if v and v.ok then
-                    local who = (v.nickname ~= "") and v.nickname or "已登录"
-                    local tag = v.isVip and (" ・ " .. tostring(v.vipName or "VIP")) or ""
-                    pcall(function() NMAccountPara:Set({ Title = "当前状态: " .. who .. tag,
-                        Content = "账号状态正常。" }) end)
-                    notify("登录", "状态: " .. who .. tag, 3, "success")
-                else
-                    notify("登录", "账号状态查询失败 (cookie 可能已过期)", 4, "error")
-                end
-            end)
-        end,
-    })
+    local GB_Account = Tabs["音乐"]:AddLeftGroupbox("🔑 账号登录 (听完整版/VIP)")
+    NMAccountPara = GB_Account:AddParagraph("当前状态: 未登录",
+        "登录后可播放你账号权限内的歌曲 (含 VIP 完整版)。⭐ 建议使用小号 —— cookie 会发往第三方接口服务, 请自行评估账号风险。登录信息只保存在本机配置里。")
+    NMPhoneBox = GB_Account:AddInput("NMPhone", { Text = "① 手机号", Default = "", Placeholder = "输入网易云绑定手机号", Callback = function() playClickSound() end })
+    GB_Account:AddButton({ Text = "📨 ② 发送验证码", Callback = function()
+        playClickSound(); local phone = ""; pcall(function() phone = tostring(NMPhoneBox.Value or "") end)
+        if phone == "" then notify("登录", "请先填手机号", 2.5, "warn"); return end
+        notify("登录", "正在发送验证码...", 2, "info"); task.spawn(function()
+            local d = musicSendSms(phone)
+            if d and not d.code then notify("登录", "验证码已发送, 请查收短信 ✅", 4, "success")
+            else notify("登录", "发送失败: " .. tostring((d and (d.message or d.msg)) or "接口无响应"), 5, "error") end
+        end)
+    end })
+    NMCodeBox = GB_Account:AddInput("NMCode", { Text = "③ 验证码", Default = "", Placeholder = "输入短信收到的验证码", Callback = function() playClickSound() end })
+    GB_Account:AddButton({ Text = "✅ ④ 登录", Callback = function()
+        playClickSound(); local phone, code = "", ""
+        pcall(function() phone = tostring(NMPhoneBox.Value or "") end); pcall(function() code = tostring(NMCodeBox.Value or "") end)
+        if phone == "" or code == "" then notify("登录", "手机号和验证码都要填", 2.5, "warn"); return end
+        notify("登录", "正在验证...", 2, "info"); task.spawn(function()
+            local ok, info = musicVerifySms(phone, code)
+            if ok then notify("登录", "登录成功 🎉 正在读取账号信息", 3, "success"); local v = musicQueryVip()
+                local who = (v and v.ok and v.nickname ~= "") and v.nickname or "已登录"
+                local tag = (v and v.ok and v.isVip) and (" ・ " .. tostring(v.vipName or "VIP")) or ""
+                pcall(function() NMAccountPara:Set({ Title = "当前状态: " .. who .. tag, Content = "已登录, 可播放你账号权限内的歌曲。想换号点下方『退出登录』。" }) end)
+            else notify("登录", "登录失败: " .. tostring(info), 5, "error") end
+        end)
+    end })
+    GB_Account:AddButton({ Text = "🚪 退出登录 (清除 cookie)", Callback = function()
+        playClickSound(); CONFIG.Music_Cookie = ""; musicSaveCookie()
+        pcall(function() NMAccountPara:Set({ Title = "当前状态: 未登录", Content = "已清除本机保存的登录信息。" }) end)
+        notify("登录", "已退出登录", 2.5, "info")
+    end })
+    GB_Account:AddButton({ Text = "🔄 刷新账号状态", Callback = function()
+        playClickSound(); if CONFIG.Music_Cookie == "" then notify("登录", "当前未登录", 2.5, "warn"); return end
+        task.spawn(function() local v = musicQueryVip()
+            if v and v.ok then local who = (v.nickname ~= "") and v.nickname or "已登录"; local tag = v.isVip and (" ・ " .. tostring(v.vipName or "VIP")) or ""
+                pcall(function() NMAccountPara:Set({ Title = "当前状态: " .. who .. tag, Content = "账号状态正常。" }) end)
+                notify("登录", "状态: " .. who .. tag, 3, "success")
+            else notify("登录", "账号状态查询失败 (cookie 可能已过期)", 4, "error") end
+        end)
+    end })
 
-    --//===================== ★接口设置
-    MusicTab:CreateSection("⚙ 接口设置")
-    NMApiBox = MusicTab:CreateTextBox({
-        Name = "🌐 接口地址 (Cloudflare Worker)",
-        CurrentValue = CONFIG.Music_Api,
-        PlaceholderText = "https://your-worker.workers.dev",
-        ClearTextOnFocus = false,
-        Flag = "NMApi",
+    local GB_Api = Tabs["音乐"]:AddLeftGroupbox("⚙ 接口设置")
+    NMApiBox = GB_Api:AddInput("NMApi", {
+        Text = "🌐 接口地址 (Cloudflare Worker)", Default = CONFIG.Music_Api, Placeholder = "https://your-worker.workers.dev",
+        Callback = function(v) playClickSound(); if v and v ~= "" then CONFIG.Music_Api = v; notify("接口设置", "已更新接口地址", 2.5, "success") end end,
+    })
+    NMQualityDropdown = GB_Api:AddDropdown("NMQuality", {
+        Text = "🎼 音质", Values = { "standard", "higher", "exhigh", "lossless" }, Default = (function() for i,v in ipairs({"standard","higher","exhigh","lossless"}) do if v == (CONFIG.Music_Quality or "exhigh") then return i end end return 3 end)(),
+        Callback = function(opt) playClickSound(); CONFIG.Music_Quality = opt; notify("接口设置", "音质: " .. tostring(opt), 2, "info") end,
+    })
+    GB_Api:AddButton({ Text = "🔍 测试接口连通性", Callback = function() playClickSound(); notify("接口设置", "正在测试...", 2, "info"); task.spawn(function()
+        local list = musicSearch("test", 1)
+        if #list > 0 then notify("接口设置", "接口正常 ✅ 搜到: " .. list[1].name, 4, "success") else notify("接口设置", "接口无响应 ❌ 可能已失效, 请更换地址", 5, "error") end
+    end) end })
+    GB_Api:AddParagraph("🌐 接口说明",
+        "本音乐引擎依赖第三方 Cloudflare Worker 接口。若某天搜不到歌, 说明该接口已失效, 在上方『接口地址』里换成你自建或可用的地址即可。登录 cookie 会一并发送给该接口用于取 VIP 曲。")
+
+    --//===================== 配置页
+    local GB_WL = Tabs["配置"]:AddLeftGroupbox("📝 白名单 (只保护本服玩家)")
+    WLBox = GB_WL:AddInput("WLInput", {
+        Text = "➕ 加入白名单 (输入本服玩家名)", Default = "", Placeholder = "如 a",
         Callback = function(v)
-            playClickSound()
-            if v and v ~= "" then
-                CONFIG.Music_Api = v
-                notify("接口设置", "已更新接口地址", 2.5, "success")
-            end
-        end,
-    })
-    NMQualityDropdown = MusicTab:CreateDropdown({
-        Name = "🎼 音质",
-        Options = { "standard", "higher", "exhigh", "lossless" },
-        CurrentOption = CONFIG.Music_Quality or "exhigh",
-        Flag = "NMQuality",
-        Callback = function(opt)
-            playClickSound()
-            CONFIG.Music_Quality = opt
-            notify("接口设置", "音质: " .. tostring(opt), 2, "info")
-        end,
-    })
-    MusicTab:CreateButton({
-        Name = "🔍 测试接口连通性",
-        Callback = function()
-            playClickSound()
-            notify("接口设置", "正在测试...", 2, "info")
-            task.spawn(function()
-                local list = musicSearch("test", 1)
-                if #list > 0 then
-                    notify("接口设置", "接口正常 ✅ 搜到: " .. list[1].name, 4, "success")
-                else
-                    notify("接口设置", "接口无响应 ❌ 可能已失效, 请更换地址", 5, "error")
-                end
-            end)
-        end,
-    })
-    MusicTab:CreateParagraph({
-        Title = "🌐 接口说明",
-        Content = "本音乐引擎依赖第三方 Cloudflare Worker 接口。若某天搜不到歌, 说明该接口已失效, "
-                .. "在上方『接口地址』里换成你自建或可用的地址即可。登录 cookie 会一并发送给该接口用于取 VIP 曲。",
-    })
-
-    --//===================== ★ 折叠对象: 收起「账号登录 + 接口设置」
-    -- 这两块是低频的高级设置, 默认收起来, 让音乐页一屏能看完。
-    MusicAdvFold = Fold.New("音乐", {
-        -- 账号登录区 (6 个)
-        "① 手机号",
-        "📨 ② 发送验证码",
-        "③ 验证码",
-        "✅ ④ 登录",
-        "🚪 退出登录 (清除 cookie)",
-        "🔄 刷新账号状态",
-        -- 接口设置区 (3 个)
-        "🌐 接口地址 (Cloudflare Worker)",
-        "🎼 音质",
-        "🔍 测试接口连通性",
-    })
-    -- 默认收起 (延迟执行, 等 UI 挂载完成)
-    task.delay(1.2, function()
-        pcall(function() MusicAdvFold:Set(false) end)
-    end)
-    -- 登录成功后自动展开, 免得用户找不到
-    -- (在下面登录回调里通过 MusicAdvFold:Set(true) 触发)
-
-    --//===================== 设置页 (白名单 + 配置)
-    SettingsTab:CreateSection("📝 白名单 (只保护本服玩家)")
-    WLBox = SettingsTab:CreateTextBox({
-        Name = "➕ 加入白名单 (输入本服玩家名)",
-        CurrentValue = "",
-        PlaceholderText = "如 a",
-        ClearTextOnFocus = false,
-        Flag = "WLInput",
-        Callback = function(v)
-            playClickSound()
-            if not v or v == "" then return end
+            playClickSound(); if not v or v == "" then return end
             local ok, msg = addWhitelist(v)
-            if ok then
-                pcall(function() WLListDropdown:Refresh(CONFIG.Whitelist) end)
-                notify("白名单", msg, 3, "success")
-            else
-                notify("白名单", msg, 3, "warn")
-            end
+            if ok then pcall(function() WLListDropdown:Refresh(CONFIG.Whitelist) end); notify("白名单", msg, 3, "success")
+            else notify("白名单", msg, 3, "warn") end
         end,
     })
-    WLListDropdown = SettingsTab:CreateDropdown({
-        Name = "📝 白名单列表 (点选后移除)",
-        Options = CONFIG.Whitelist,
-        CurrentOption = #CONFIG.Whitelist > 0 and CONFIG.Whitelist[1] or nil,
-        Flag = "WLList",
+    WLListDropdown = GB_WL:AddDropdown("WLList", {
+        Text = "📝 白名单列表 (点选后移除)", Values = CONFIG.Whitelist, Default = 1,
         Callback = function() playClickSound() end,
     })
-    SettingsTab:CreateButton({
-        Name = "➖ 移除所选白名单",
-        Callback = function()
-            playClickSound()
-            local opt = WLListDropdown and WLListDropdown.CurrentOption
-            if not opt then notify("白名单", "未选择要移除的人", 2.5, "warn"); return end
-            for i, n in ipairs(CONFIG.Whitelist) do
-                if n == opt then
-                    removeWhitelist(i)
-                    pcall(function() WLListDropdown:Refresh(CONFIG.Whitelist) end)
-                    notify("白名单", "已移除 -- " .. n, 2.5, "info")
-                    return
-                end
-            end
-            notify("白名单", "未找到 -- " .. tostring(opt), 2.5, "warn")
-        end,
-    })
-    SettingsTab:CreateButton({
-        Name = "💾 立即保存白名单",
-        Callback = function()
-            playClickSound()
-            if not hasFs() then
-                notify("配置", "当前执行器不支持文件读写, 关游戏后会重置", 4, "error")
-                return
-            end
-            if saveConfig() then
-                notify("白名单", "已保存 -- " .. #CONFIG.Whitelist .. " 人", 3, "success")
-            else
-                notify("白名单", "保存失败", 3, "error")
-            end
-        end,
-    })
+    GB_WL:AddButton({ Text = "➖ 移除所选白名单", Callback = function()
+        playClickSound(); local opt = WLListDropdown and WLListDropdown.Value
+        if not opt then notify("白名单", "未选择要移除的人", 2.5, "warn"); return end
+        for i, n in ipairs(CONFIG.Whitelist) do if n == opt then removeWhitelist(i); pcall(function() WLListDropdown:Refresh(CONFIG.Whitelist) end); notify("白名单", "已移除 -- " .. n, 2.5, "info"); return end end
+        notify("白名单", "未找到 -- " .. tostring(opt), 2.5, "warn")
+    end })
+    GB_WL:AddButton({ Text = "💾 立即保存白名单", Callback = function()
+        playClickSound(); if not hasFs() then notify("配置", "当前执行器不支持文件读写, 关游戏后会重置", 4, "error"); return end
+        if saveConfig() then notify("白名单", "已保存 -- " .. #CONFIG.Whitelist .. " 人", 3, "success") else notify("白名单", "保存失败", 3, "error") end
+    end })
 
-    SettingsTab:CreateSection("⚙ 配置")
-    SettingsTab:CreateButton({
-        Name = "↩ 重置所有设置为默认",
-        Callback = function()
-            playClickSound()
-            -- 先复位 Rayfield 元素显示 (部分版本 :Set 会触发回调自动写 CONFIG)
-            pcall(function() KickToggle:Set(false) end)
-            pcall(function() KickIntSlider:Set(2.0) end)
-            pcall(function() KickNotifyToggle:Set(true) end)
-            pcall(function() KickSoundToggle:Set(true) end)
-            pcall(function() WarnToggle:Set(true) end)
-            pcall(function() if MusicEnabledToggle and MusicEnabledToggle.Set then MusicEnabledToggle:Set(true) end end)
-            pcall(function() if MusicLastManToggle and MusicLastManToggle.Set then MusicLastManToggle:Set(true) end end)
-            pcall(function() if MusicVolSlider and MusicVolSlider.Set then MusicVolSlider:Set(0.5) end end)
-            pcall(function() if MusicSpeedSlider and MusicSpeedSlider.Set then MusicSpeedSlider:Set(1.0) end end)
-            pcall(function() if StartupSoundToggle and StartupSoundToggle.Set then StartupSoundToggle:Set(true) end end)
-            -- 显式复位 CONFIG (兼容 :Set 不触发回调的版本)
-            CONFIG.AntiKick_AutoKick    = false
-            CONFIG.AntiKick_Enabled      = false
-            CONFIG.AntiKick_KickInterval = 2.0
-            CONFIG.Kick_Notify           = true
-            CONFIG.Kick_Notify_Sound     = true
-            CONFIG.Warn_OnVoted          = true
-            CONFIG.Music_Enabled         = true
-            CONFIG.Music_LastMan         = true
-            CONFIG.Music_Speed           = 1.0
-            CONFIG.Startup_Sound         = true
-            CONFIG.Whitelist             = {}
-            CONFIG.Admin_AutoLeave       = false
-            CONFIG.Admin_GroupId         = 0
-            CONFIG.Admin_Names           = {}
-            pcall(function() AdminLeaveToggle:Set(false) end)
-            pcall(function() if AdminGroupBox and AdminGroupBox.Set then AdminGroupBox:Set("") end end)
-            pcall(function() if AdminNamesBox and AdminNamesBox.Set then AdminNamesBox:Set("") end end)
-            stopAutoKick()
-            pcall(function() WLListDropdown:Refresh({}) end)
-            notify("配置", "已重置为默认", 3, "warn")
-        end,
-    })
-    SettingsTab:CreateParagraph({
-        Title = "⚙ 配置说明",
-        Content = "开关/滑块/下拉/键绑由 Rayfield 自动保存 (下次进游戏自动恢复); "
-                .. "白名单列表为动态数据, 走本地文件单独持久化。",
-    })
+    local GB_Conf = Tabs["配置"]:AddLeftGroupbox("⚙ 配置")
+    GB_Conf:AddButton({ Text = "↩ 重置所有设置为默认", Callback = function()
+        playClickSound()
+        pcall(function() KickToggle:SetValue(false) end)
+        pcall(function() KickIntSlider:SetValue(2.0) end)
+        pcall(function() KickNotifyToggle:SetValue(true) end)
+        pcall(function() KickSoundToggle:SetValue(true) end)
+        pcall(function() WarnToggle:SetValue(true) end)
+        pcall(function() if MusicEnabledToggle and MusicEnabledToggle.SetValue then MusicEnabledToggle:SetValue(true) end end)
+        pcall(function() if MusicLastManToggle and MusicLastManToggle.SetValue then MusicLastManToggle:SetValue(true) end end)
+        pcall(function() if MusicVolSlider and MusicVolSlider.SetValue then MusicVolSlider:SetValue(0.5) end end)
+        pcall(function() if MusicSpeedSlider and MusicSpeedSlider.SetValue then MusicSpeedSlider:SetValue(1.0) end end)
+        pcall(function() if StartupSoundToggle and StartupSoundToggle.SetValue then StartupSoundToggle:SetValue(true) end end)
+        CONFIG.AntiKick_AutoKick = false; CONFIG.AntiKick_Enabled = false; CONFIG.AntiKick_KickInterval = 2.0
+        CONFIG.Kick_Notify = true; CONFIG.Kick_Notify_Sound = true; CONFIG.Warn_OnVoted = true
+        CONFIG.Music_Enabled = true; CONFIG.Music_LastMan = true; CONFIG.Music_Speed = 1.0; CONFIG.Startup_Sound = true
+        CONFIG.Whitelist = {}; CONFIG.Admin_AutoLeave = false; CONFIG.Admin_GroupId = 0; CONFIG.Admin_Names = {}
+        pcall(function() AdminLeaveToggle:SetValue(false) end)
+        pcall(function() if AdminGroupBox and AdminGroupBox.SetValue then AdminGroupBox:SetValue("") end end)
+        pcall(function() if AdminNamesBox and AdminNamesBox.SetValue then AdminNamesBox:SetValue("") end end)
+        stopAutoKick(); pcall(function() WLListDropdown:Refresh({}) end)
+        notify("配置", "已重置为默认", 3, "warn")
+    end })
+    GB_Conf:AddParagraph("⚙ 配置说明",
+        "开关/滑块/下拉/键绑由 Obsidian 自动保存 (下次进游戏自动恢复); 白名单列表为动态数据, 走本地文件单独持久化。")
 
-    --//===================== 开启动画音效 (自音乐页搬迁至此)
-    SettingsTab:CreateSection("🎬 开启动画音效")
-    StartupSoundToggle = SettingsTab:CreateToggle({
-        Name = "🎬 ★ 开启动画音效 (脚本加载完成时播放)",
-        CurrentValue = CONFIG.Startup_Sound,
-        Flag = "StartupSound",
-        Callback = function(v)
-            playClickSound()
-            CONFIG.Startup_Sound = v
-            if v then
-                playStartupSound()
-                notify("开启动画", "已开启 -- 下次加载时播放", 2.5, "success")
-            else
-                notify("开启动画", "已关闭", 2.5, "info")
-            end
+    local GB_Startup = Tabs["配置"]:AddLeftGroupbox("🎬 开启动画音效")
+    StartupSoundToggle = GB_Startup:AddToggle("StartupSound", {
+        Text = "🎬 ★ 开启动画音效 (脚本加载完成时播放)", Default = CONFIG.Startup_Sound,
+        Callback = function(v) playClickSound(); CONFIG.Startup_Sound = v
+            if v then playStartupSound(); notify("开启动画", "已开启 -- 下次加载时播放", 2.5, "success") else notify("开启动画", "已关闭", 2.5, "info") end
         end,
     })
-    SettingsTab:CreateButton({
-        Name = "🎵 试听开启动画音效",
-        Callback = function()
-            playClickSound()
-            local keep = CONFIG.Startup_Sound
-            CONFIG.Startup_Sound = true   -- 试听时强制播一次
-            playStartupSound()
-            CONFIG.Startup_Sound = keep
-            notify("开启动画", "试听中...", 2, "info")
-        end,
-    })
-    SettingsTab:CreateParagraph({
-        Title = "🎬 开启动画音效说明",
-        Content = "脚本加载完成、面板首次弹出时播放的开场音效。"
-                .. "注: Rayfield 库自带的加载屏(EGG / 防御护盾 + 进度条)本身不含音效, 此音效即用于补上开场听感。",
-    })
+    GB_Startup:AddButton({ Text = "🎵 试听开启动画音效", Callback = function() playClickSound(); local keep = CONFIG.Startup_Sound; CONFIG.Startup_Sound = true; playStartupSound(); CONFIG.Startup_Sound = keep; notify("开启动画", "试听中...", 2, "info") end })
+    GB_Startup:AddParagraph("🎬 开启动画音效说明", "脚本加载完成、面板首次弹出时播放的开场音效。")
 
-    --//===================== 显示/隐藏键 (Rayfield 折叠条 + 此键切换窗口)
-    SettingsTab:CreateKeybind({
-        Name = "⌨ 显示/隐藏面板 (折叠到标题栏)",
-        CurrentKey = CONFIG.HOTKEY or "T",
-        HoldToInteract = false,
-        Flag = "UIToggleKey",
-        Callback = function(Key)
-            playClickSound()
-            CONFIG.HOTKEY = Key
-            pcall(function() if Window and Window.Minimize then Window:Minimize() end end)
-        end,
-    })
+    local uiKeyLabel = Tabs["配置"]:AddLabel("⌨ 显示/隐藏面板键")
+    uiKeyLabel:AddKeyPicker("UIToggleKey", { Text = "切换面板", Default = CONFIG.HOTKEY or "T", Mode = "Toggle" })
+    Toggles.UIToggleKey:OnClick(function()
+        pcall(function() if Library.ScreenGui then Library.ScreenGui.Enabled = not Library.ScreenGui.Enabled end end)
+    end)
 
     --//===================== 脚本分支页
-    BranchTab:CreateSection("📦 内置分支")
-    BranchTab:CreateParagraph({
-        Title = "说明",
-        Content = "这里可以加载独立的子脚本, 不占用主脚本代码。已加载过的脚本会自动去重, 不会重复执行。",
-    })
-    BranchTab:CreateButton({
-        Name = "🎵 音乐功能位置提示",
-        Callback = function()
-            playClickSound()
-            notify("音乐", "音乐功能已内置到「音乐」页 🎵 直接切到音乐页使用即可", 4, "info")
-        end,
-    })
-    BranchTab:CreateButton({
-        Name = "🔫 加载无限子弹脚本 (塔菲)",
-        Callback = function()
-            playClickSound()
-            task.spawn(function()
-                runRemoteScript(
-                    "https://raw.githubusercontent.com/sdacrdroblox120/duikn/refs/heads/main/%E5%A1%94%E8%8F%B2%E8%84%9A%E6%9C%AC.txt",
-                    "无限子弹 (塔菲)", false)
-            end)
-        end,
-    })
-    BranchTab:CreateButton({
-        Name = "🗑 重置加载记录 (允许再次加载)",
-        Callback = function()
-            playClickSound()
-            STATE.loadedScripts = {}
-            notify("脚本分支", "已清空加载记录, 所有脚本可重新加载", 3, "info")
-        end,
-    })
+    local GB_Builtin = Tabs["脚本分支"]:AddLeftGroupbox("📦 内置分支")
+    GB_Builtin:AddParagraph("说明", "这里可以加载独立的子脚本, 不占用主脚本代码。已加载过的脚本会自动去重, 不会重复执行。")
+    GB_Builtin:AddButton({ Text = "🎵 音乐功能位置提示", Callback = function() playClickSound(); notify("音乐", "音乐功能已内置到「音乐」页 🎵 直接切到音乐页使用即可", 4, "info") end })
+    GB_Builtin:AddButton({ Text = "🔫 加载无限子弹脚本 (塔菲)", Callback = function() playClickSound(); task.spawn(function() runRemoteScript("https://raw.githubusercontent.com/sdacrdroblox120/duikn/refs/heads/main/%E5%A1%94%E8%8F%B2%E8%84%9A%E6%9C%AC.txt", "无限子弹 (塔菲)", false) end) end })
+    GB_Builtin:AddButton({ Text = "🗑 重置加载记录 (允许再次加载)", Callback = function() playClickSound(); STATE.loadedScripts = {}; notify("脚本分支", "已清空加载记录, 所有脚本可重新加载", 3, "info") end })
 
-    BranchTab:CreateSection("🔗 加载自定义脚本")
-    ExtUrlBox = BranchTab:CreateTextBox({
-        Name = "🔗 脚本地址 (raw 链接, 需以 .lua/.txt 结尾)",
-        Placeholder = "https://raw.githubusercontent.com/用户/仓库/main/脚本.lua",
-        Flag = "ExtScriptUrl",
-        Callback = function(v) CONFIG.ExtScripts_LastUrl = v end,
-    })
-    ExtRunBtn = BranchTab:CreateButton({
-        Name = "▶ 加载并运行该脚本",
-        Callback = function()
-            playClickSound()
-            local url = ""
-            pcall(function() url = ExtUrlBox.Value end)
-            if type(url) ~= "string" or url == "" then
-                notify("脚本分支", "请先填写脚本地址", 3, "error")
-                return
-            end
-            task.spawn(function() runRemoteScript(url, "自定义脚本", false) end)
-        end,
-    })
-    BranchTab:CreateSection("📋 脚本列表")
-    ExtListDropdown = BranchTab:CreateDropdown({
-        Name = "📦 已保存的脚本 (点选即加载)",
-        Options = {"(暂无, 用上方地址框添加)"},
-        Flag = "ExtScriptPick",
-        Callback = function(opt)
-            playClickSound()
-            for _, item in ipairs(CONFIG.ExtScripts or {}) do
-                if item.name == opt then
-                    task.spawn(function() runRemoteScript(item.url, item.name, false) end)
-                    return
-                end
-            end
-        end,
-    })
-    BranchTab:CreateButton({
-        Name = "＋ 把当前地址保存到列表",
-        Callback = function()
-            playClickSound()
-            local url = ""
-            pcall(function() url = ExtUrlBox.Value end)
-            if type(url) ~= "string" or url == "" then
-                notify("脚本分支", "请先填写脚本地址", 3, "error")
-                return
-            end
-            CONFIG.ExtScripts = CONFIG.ExtScripts or {}
-            local shortName = string.match(url, "([^/]+)$") or ("脚本" .. (#CONFIG.ExtScripts + 1))
-            for _, item in ipairs(CONFIG.ExtScripts) do
-                if item.url == url then
-                    notify("脚本分支", "该地址已在列表中", 3, "info")
-                    return
-                end
-            end
-            table.insert(CONFIG.ExtScripts, { name = shortName, url = url })
-            local opts = {}
-            for _, item in ipairs(CONFIG.ExtScripts) do table.insert(opts, item.name) end
-            pcall(function() ExtListDropdown:Refresh(opts) end)
-            saveConfig()
-            notify("脚本分支", string.format("已保存: %s", shortName), 3, "success")
-        end,
-    })
-    BranchTab:CreateButton({
-        Name = "🗑 删除列表中的选中项",
-        Callback = function()
-            playClickSound()
-            local cur = nil
-            pcall(function() cur = ExtListDropdown.Value end)
-            if not cur then notify("脚本分支", "请先在下拉框选中一项", 3, "error"); return end
-            local newList = {}
-            for _, item in ipairs(CONFIG.ExtScripts or {}) do
-                if item.name ~= cur then table.insert(newList, item) end
-            end
-            CONFIG.ExtScripts = newList
-            local opts = {}
-            for _, item in ipairs(newList) do table.insert(opts, item.name) end
-            if #opts == 0 then opts = {"(暂无, 用上方地址框添加)"} end
-            pcall(function() ExtListDropdown:Refresh(opts) end)
-            saveConfig()
-            notify("脚本分支", "已删除", 3, "info")
-        end,
-    })
+    local GB_Custom = Tabs["脚本分支"]:AddLeftGroupbox("🔗 加载自定义脚本")
+    ExtUrlBox = GB_Custom:AddInput("ExtScriptUrl", { Text = "🔗 脚本地址 (raw 链接, 需以 .lua/.txt 结尾)", Placeholder = "https://raw.githubusercontent.com/用户/仓库/main/脚本.lua", Callback = function(v) CONFIG.ExtScripts_LastUrl = v end })
+    GB_Custom:AddButton({ Text = "▶ 加载并运行该脚本", Callback = function() playClickSound(); local url = ""; pcall(function() url = ExtUrlBox.Value end)
+        if type(url) ~= "string" or url == "" then notify("脚本分支", "请先填写脚本地址", 3, "error"); return end
+        task.spawn(function() runRemoteScript(url, "自定义脚本", false) end)
+    end })
+    local GB_List = Tabs["脚本分支"]:AddLeftGroupbox("📋 脚本列表")
+    ExtListDropdown = GB_List:AddDropdown("ExtScriptPick", {
+        Text = "📦 已保存的脚本 (点选即加载)", Values = (function() local o = {}; for _, it in ipairs(CONFIG.ExtScripts or {}) do table.insert(o, it.name) end; return (#o > 0 and o) or {"(暂无, 用上方地址框添加)"} end)(), Default = 1,
+        Callback = function(opt) playClickSound(); for _, item in ipairs(CONFIG.ExtScripts or {}) do if item.name == opt then task.spawn(function() runRemoteScript(item.url, item.name, false) end); return end end
+    end })
+    GB_List:AddButton({ Text = "＋ 把当前地址保存到列表", Callback = function() playClickSound(); local url = ""; pcall(function() url = ExtUrlBox.Value end)
+        if type(url) ~= "string" or url == "" then notify("脚本分支", "请先填写脚本地址", 3, "error"); return end
+        CONFIG.ExtScripts = CONFIG.ExtScripts or {}; local shortName = string.match(url, "([^/]+)$") or ("脚本" .. (#CONFIG.ExtScripts + 1))
+        for _, item in ipairs(CONFIG.ExtScripts) do if item.url == url then notify("脚本分支", "该地址已在列表中", 3, "info"); return end end
+        table.insert(CONFIG.ExtScripts, { name = shortName, url = url }); local opts = {}; for _, item in ipairs(CONFIG.ExtScripts) do table.insert(opts, item.name) end
+        pcall(function() ExtListDropdown:Refresh(opts) end); saveConfig(); notify("脚本分支", string.format("已保存: %s", shortName), 3, "success")
+    end })
+    GB_List:AddButton({ Text = "🗑 删除列表中的选中项", Callback = function() playClickSound(); local cur = nil; pcall(function() cur = ExtListDropdown.Value end)
+        if not cur then notify("脚本分支", "请先在下拉框选中一项", 3, "error"); return end
+        local newList = {}; for _, item in ipairs(CONFIG.ExtScripts or {}) do if item.name ~= cur then table.insert(newList, item) end end
+        CONFIG.ExtScripts = newList; local opts = {}; for _, item in ipairs(newList) do table.insert(opts, item.name) end
+        if #opts == 0 then opts = {"(暂无, 用上方地址框添加)"} end
+        pcall(function() ExtListDropdown:Refresh(opts) end); saveConfig(); notify("脚本分支", "已删除", 3, "info")
+    end })
+    GB_List:AddParagraph("⚙ 高级", "若加载失败, 多半是执行器不支持 loadstring 或网络受限。可改用 execute 类执行器, 或把脚本下载后手动执行。音乐功能已内置到「音乐」页, 不需要再通过这里加载播放器。")
 
-    BranchTab:CreateSection("⚙ 高级")
-    BranchTab:CreateParagraph({
-        Title = "提示",
-        Content = "若加载失败, 多半是执行器不支持 loadstring 或网络受限。可改用 execute 类执行器, 或把脚本下载后手动执行。"
-                .. " 音乐功能已内置到「音乐」页, 不需要再通过这里加载播放器。",
-    })
+    pcall(function() SaveManager:LoadAutoloadConfig() end)
 end
 
 --//===================================================== 初始化
@@ -2478,36 +1832,35 @@ pcall(function()
     end)
 end)
 
--- ★把 Rayfield 恢复/保存的值同步回 CONFIG, 并重新应用循环状态
+-- ★把 Obsidian 恢复/保存的值同步回 CONFIG, 并重新应用循环状态
 local function applySavedToEngine()
-    if not Rayfield then return end
-    CONFIG.AntiKick_KickInterval = KickIntSlider.CurrentValue
-    CONFIG.Kick_Notify           = KickNotifyToggle.CurrentValue
-    CONFIG.Kick_Notify_Sound     = KickSoundToggle.CurrentValue
-    CONFIG.Warn_OnVoted          = WarnToggle.CurrentValue
-    CONFIG.Music_Enabled         = MusicEnabledToggle.CurrentValue
-    CONFIG.Music_LastMan         = MusicLastManToggle.CurrentValue
-    CONFIG.Music_Volume          = MusicVolSlider.CurrentValue
-    CONFIG.Music_Speed           = MusicSpeedSlider.CurrentValue
-    CONFIG.Startup_Sound         = StartupSoundToggle.CurrentValue
-    CONFIG.Admin_AutoLeave       = AdminLeaveToggle.CurrentValue
+    if not Library then return end
+    CONFIG.AntiKick_KickInterval = KickIntSlider.Value
+    CONFIG.Kick_Notify           = KickNotifyToggle.Value
+    CONFIG.Kick_Notify_Sound     = KickSoundToggle.Value
+    CONFIG.Warn_OnVoted          = WarnToggle.Value
+    CONFIG.Music_Enabled         = MusicEnabledToggle.Value
+    CONFIG.Music_LastMan         = MusicLastManToggle.Value
+    CONFIG.Music_Volume          = MusicVolSlider.Value
+    CONFIG.Music_Speed           = MusicSpeedSlider.Value
+    CONFIG.Startup_Sound         = StartupSoundToggle.Value
+    CONFIG.Admin_AutoLeave       = AdminLeaveToggle.Value
 
     -- ★脚本分支: 恢复上次填写的地址与脚本列表
     pcall(function() CONFIG.ExtScripts_LastUrl = ExtUrlBox.Value end)
 
     -- ★安全优先: 踢人开关不自动恢复 (每次进游戏都从关开始)
-    pcall(function() KickToggle:Set(false) end)
+    pcall(function() KickToggle:SetValue(false) end)
     CONFIG.AntiKick_AutoKick = false
     CONFIG.AntiKick_Enabled  = false
 
-    -- ★踢人开关不自动恢复已在上方处理; 传送功能已移除, 无需重应用循环
     -- ★管理员检测: 若上次开着, 重新启动监控
     if CONFIG.Admin_AutoLeave then startAdminWatch() end
 end
 
-if Rayfield then applySavedToEngine() end
+if Library then applySavedToEngine() end
 
--- ★自动保存白名单 (每 30 秒; 其余 UI 状态由 Rayfield 自带保存)
+-- ★自动保存白名单 (每 30 秒; 其余 UI 状态由 Obsidian 自带保存)
 task.spawn(function()
     while task.wait(30) do
         if STATE.destroyed then break end
@@ -2517,7 +1870,7 @@ end)
 
 notify("EGG", "已加载 | 好友保护已启用", 4, "success")
 
--- ★开启动画音效: 面板构建完成后延迟一拍播放, 避开 Rayfield 加载屏的淡入
+-- ★开启动画音效: 面板构建完成后延迟一拍播放, 避开 Obsidian 加载屏的淡入
 task.delay(0.6, function() playStartupSound() end)
 
 --//===================================================== 防挂机
@@ -2531,5 +1884,5 @@ print("[EGG] 已加载")
 print(string.format("[EGG] 平台: %s", (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "移动端(触摸优化)" or "PC端"))
 print(string.format("[EGG] 保护对象: 好友列表 + 白名单(%d 人)", #(CONFIG.Whitelist or {})))
 print(string.format("[EGG] UI 库: %s | 配置持久化: %s",
-    Rayfield and "Rayfield" or "无", hasFs() and "支持" or "不支持"))
-print(string.format("[EGG] 收起方式: Rayfield 折叠条 (点标题栏 [—]) | 切换键: %s", CONFIG.HOTKEY or "T"))
+    Library and "Obsidian" or "无", hasFs() and "支持" or "不支持"))
+print(string.format("[EGG] 收起方式: Obsidian 窗口最小化 (点标题栏 [—]) | 切换键: %s", CONFIG.HOTKEY or "T"))
