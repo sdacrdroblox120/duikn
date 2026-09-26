@@ -1,6 +1,6 @@
 --[[
 ================================================================================
-EGG  ·  防御 + 高级功能 (命中率反作弊识别)  —  Obsidian 版 (第二十轮 · 音乐→检测)
+EGG  ·  防御 (反踢护盾 / 管理员防护)  —  Obsidian 版 (第二十轮 · 音乐→检测)
 ================================================================================
   ★ 本版相对第十八轮的改动 (Rayfield -> Obsidian 换库 + 页面重排):
     1. ★ 换库: 原 Rayfield 红黑主题改为 Obsidian (Linoria 改良版) 界面框架。
@@ -1205,195 +1205,70 @@ if not Library then
 end
 
 --//===================================================== 反踢护盾 (Anti-Kick Shield)
---- 把你贴的那份 __namecall 反踢片段加固后内置为【可开关】模块。
---- 防御性: 仅拦截游戏反作弊/踢人远程对本地的调用, 不改动任何游戏状态, 不提供任何玩法优势。
---- 与原版行为一致:
----   ① 拦下 RequestPlayerKick 等踢人远程的 FireServer / InvokeServer
----   ② 拦下反作弊脚本 (LocalClean / CharacterControl) 发起的一切本地调用
----   ③ 循环禁用本机 CharacterControl (防一部分本地踢人)
---- 加固点 (原版会崩, 这里都修了):
----   - 全部判据加 nil 防御 (原版 getcallingscript().Name 在返回 nil 时直接崩)
----   - 钩子主体 xpcall 包裹, 异常绝不外抛 (否则 __namecall 一抛游戏全崩)
----   - 纯计算不 yield, 不递归 FireServer
----   - 主开关 M.enabled: 关掉即全部放行, 无需重启客户端
+--- 按用户提供的 __namecall / __newindex 反踢片段实现, 常驻 + 可重复点击安装。
+--- 防踢/反踢持续生效: ① __namecall 钩子常驻拦踢人远程 ② __newindex 钩子拦反作弊写入
+---   ③ RenderStepped 循环持续禁用本机 CharacterControl。点一次即常驻, 重复点幂等。
 local AntiKickShield = (function()
     local M = { installed = false, enabled = false }
-
-    -- 环境自检: 需要 UNC 兼容执行器
-    local HAVE_UNC = pcall(function()
-        return hookmetamethod and checkcaller and getnamecallmethod and getcallingscript
-    end)
-    if not HAVE_UNC then
-        warn("[EGG-反踢] 当前执行器不支持 hookmetamethod / checkcaller, 反踢护盾不可用")
-        function M.enable() notify("反踢护盾", "执行器不支持, 无法启用", 3, "error") end
-        function M.disable() end
-        function M.stats() return { ["可用"] = "否 (执行器不支持)" } end
-        return M
-    end
-
-    local CFG = {
-        -- 反作弊脚本名 (子串 + 不区分大小写)
-        blockedNames   = { "localclean", "charactercontrol" },
-        -- 踢人远程名 (子串 + 不区分大小写)
-        kickRemotes    = { "requestplayerkick", "requestkick", "playerkick" },
-        blockKickRemote       = true,
-        disableCharacterControl = true,
-        loopInterval   = 0.1,   -- 10Hz (原版每帧 60fps 纯浪费)
-        debug          = false,
-    }
-    local STATS = { namecallHits = 0, namecallBlocked = 0, kickBlocked = 0, newindexBlocked = 0, errors = 0 }
-    local BLOCKED_SET = {}      -- [脚本实例] = true (改名也认)
     local oldNameCall, oldNewIndex
     local running = false
 
-    local function safeName(inst)
-        if not inst then return nil end
-        local ok, nm = pcall(function() return inst.Name end)
-        if ok and type(nm) == "string" then return nm end
-        return nil
-    end
-    local function nameMatches(name, list)
-        if not name or type(name) ~= "string" then return false end
-        name = string.lower(name)
-        for _, pat in ipairs(list) do
-            if string.find(name, pat, 1, true) then return true end
-        end
-        return false
-    end
-    local function registerScript(inst)
-        if not inst then return end
-        local ok, isScript = pcall(function() return inst:IsA("LuaSourceContainer") end)
-        if not ok or not isScript then return end
-        if BLOCKED_SET[inst] then return end
-        if not nameMatches(safeName(inst), CFG.blockedNames) then return end
-        BLOCKED_SET[inst] = true
-    end
-
-    local function install()
-        if M.installed then return end
-        -- 初始扫描反作弊脚本 (PlayerGui / ReplicatedStorage / ReplicatedFirst)
-        pcall(function()
-            local pg = LocalPlayer:FindFirstChild("PlayerGui")
-            if pg then
-                for _, d in ipairs(pg:GetDescendants()) do registerScript(d) end
-                pg.DescendantAdded:Connect(function(d) task.defer(registerScript, d) end)
-            end
-            local rs = game:GetService("ReplicatedStorage")
-            for _, d in ipairs(rs:GetDescendants()) do registerScript(d) end
-            local rf = game:GetService("ReplicatedFirst")
-            for _, d in ipairs(rf:GetDescendants()) do registerScript(d) end
-        end)
-
-        -- ① ② __namecall 钩子
-        oldNameCall = hookmetamethod(game, "__namecall", function(self, ...)
-            STATS.namecallHits = STATS.namecallHits + 1
-            if not M.enabled then return oldNameCall(self, ...) end   -- 主开关关 -> 全放行
-            local args = table.pack(...)
-            local argc = args.n
-            local ok, result = xpcall(function()
-                -- ① 拦踢人远程
-                if CFG.blockKickRemote then
-                    local method = getnamecallmethod()
-                    if method == "FireServer" or method == "InvokeServer" then
-                        if nameMatches(safeName(self), CFG.kickRemotes) then
-                            STATS.kickBlocked = STATS.kickBlocked + 1
-                            return ""   -- 返回空串比 {} 安全
-                        end
-                    end
-                end
-                -- ② 拦反作弊脚本的本地调用 (只拦非本执行器的)
-                if not checkcaller() then
-                    local cs = getcallingscript()
-                    if cs and (BLOCKED_SET[cs] or nameMatches(safeName(cs), CFG.blockedNames)) then
-                        BLOCKED_SET[cs] = true
-                        STATS.namecallBlocked = STATS.namecallBlocked + 1
-                        return ""
-                    end
-                end
-                return oldNameCall(self, table.unpack(args, 1, argc))
-            end, function(err)
-                STATS.errors = STATS.errors + 1
-                warn("[EGG-反踢] 钩子异常(已兜住, 不影响游戏): " .. tostring(err))
-                local ok2, r = pcall(oldNameCall, self, table.unpack(args, 1, argc))
-                return ok2 and r or nil
-            end)
-            return result
-        end)
-
-        -- ③ __newindex 钩子 (不转发 = 拦截写入)
-        oldNewIndex = hookmetamethod(game, "__newindex", function(self, key, value)
-            local ok, block = xpcall(function()
-                if not M.enabled or checkcaller() then return false end
-                local cs = getcallingscript()
-                if not cs then return false end
-                if BLOCKED_SET[cs] or nameMatches(safeName(cs), CFG.blockedNames) then
-                    BLOCKED_SET[cs] = true
-                    return true
-                end
-                return false
-            end, function(err)
-                STATS.errors = STATS.errors + 1
-                return false
-            end)
-            if ok and block then
-                STATS.newindexBlocked = STATS.newindexBlocked + 1
-                return   -- 直接 return, 不碰 oldNewIndex -> 写入被丢弃
-            end
-            return oldNewIndex(self, key, value)
-        end)
-
-        -- ④ CharacterControl 禁用循环 (10Hz, 只在状态变化时写)
+    local function startLoop()
+        if running then return end
         running = true
         task.spawn(function()
             while running do
                 pcall(function()
-                    if CFG.disableCharacterControl and M.enabled and LocalPlayer.Character then
+                    if LocalPlayer.Character then
                         local cc = LocalPlayer.Character:FindFirstChild("CharacterControl")
-                        if cc and cc.Disabled ~= true then cc.Disabled = true end
+                        if cc then cc.Disabled = true end
                     end
                 end)
-                task.wait(CFG.loopInterval)
+                game:GetService("RunService").RenderStepped:Wait()
             end
         end)
-
-        M.installed = true
-        print(string.format("[EGG-反踢] ✅ 已安装 | 钩子: __namecall + __newindex | 开关: EGG_AntiKickShield.enable()/.disable()/.stats()"))
     end
 
     function M.enable()
-        install()
+        if M.installed then
+            notify("反踢护盾", "已在运行中 (常驻, 重复点击无效)", 2.5, "info")
+            return
+        end
+        local ok = pcall(function()
+            oldNameCall = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                if not checkcaller() and (getcallingscript().Name == "LocalClean" or getcallingscript().Name == "CharacterControl") then
+                    return {}
+                end
+                if method == "FireServer" and self.Name == "RequestPlayerKick" then
+                    return "fortnite sussy balls :pensive:"
+                end
+                return oldNameCall(self, ...)
+            end)
+            oldNewIndex = hookmetamethod(game, "__newindex", function(self, key, value)
+                if not checkcaller() and (getcallingscript().Name == "CharacterControl") then
+                    return {}
+                end
+                return oldNewIndex(self, key, value)
+            end)
+        end)
+        if not ok then
+            notify("反踢护盾", "执行器不支持 hookmetamethod / checkcaller, 无法启用", 3, "error")
+            return
+        end
+        M.installed = true
         M.enabled = true
-        notify("反踢护盾", "已开启 -- 拦截踢人远程 + 反作弊本地调用", 3, "success")
+        startLoop()
+        print("[EGG-反踢] ✅ 已安装并常驻 | 钩子: __namecall + __newindex | 循环禁用 CharacterControl (RenderStepped)")
+        notify("反踢护盾", "已安装并常驻 -- 拦截踢人远程 + 反作弊本地调用", 3, "success")
     end
     function M.disable()
         M.enabled = false
-        notify("反踢护盾", "已关闭 -- 钩子放行 (重启客户端才彻底移除)", 2.5, "info")
+        running = false
+        notify("反踢护盾", "已停止循环 (钩子需重启客户端彻底移除)", 2.5, "info")
     end
-    function M.toggle() if M.enabled then M.disable() else M.enable() end end
     function M.isEnabled() return M.enabled end
-    -- 运行时补名单 (万一自动扫描漏了)
-    function M.addKickRemote(name) if type(name) == "string" then table.insert(CFG.kickRemotes, string.lower(name)) end end
-    function M.addScriptName(name)
-        if type(name) ~= "string" then return end
-        table.insert(CFG.blockedNames, string.lower(name))
-        pcall(function()
-            local pg = LocalPlayer:FindFirstChild("PlayerGui")
-            if pg then for _, d in ipairs(pg:GetDescendants()) do registerScript(d) end end
-            for _, d in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do registerScript(d) end
-        end)
-    end
-    function M.stats()
-        return {
-            ["已启用"]            = M.enabled,
-            ["钩子已装"]          = M.installed,
-            ["namecall 总调用"]   = STATS.namecallHits,
-            ["拦下反作弊调用"]     = STATS.namecallBlocked,
-            ["拦下踢人请求"]       = STATS.kickBlocked,
-            ["拦下属性写入"]       = STATS.newindexBlocked,
-            ["钩子内部异常"]       = STATS.errors,
-            ["名单内脚本数"]       = (function() local n = 0 for _ in pairs(BLOCKED_SET) do n = n + 1 end return n end)(),
-        }
-    end
+    function M.stats() return { ["已启用"] = M.enabled, ["钩子已装"] = M.installed } end
     return M
 end)()
 _G.EGG_AntiKickShield = AntiKickShield
@@ -1402,7 +1277,6 @@ local Window, PlayerTab, DetectionTab, SettingsTab, BranchTab
 local KickToggle, KickIntSlider
 local KickNotifyToggle, KickSoundToggle, WarnToggle, WLBox, WLListDropdown
 local AdminLeaveToggle, AdminGroupBox, AdminNamesBox
-local DetectionEnabledToggle, DetectionThresholdSlider, DetectionMinShotsSlider, DetectionIgnoreTeamToggle
 local StartupSoundToggle
 local NMSearchBox, NMResultDropdown, NMPlayBtn, NMCustomBox, NMCustomDropdown
 local ExtListDropdown   -- (原 ExtUrlBox / ExtRunBtn 随「加载自定义脚本」分区一起删除)
@@ -1638,7 +1512,7 @@ if Library then
     --   Luau 里 function 不能挂属性(会报 attempt to index function), 所以用外部弱表记录"已包装过的函数"
     local __hardenDone = setmetatable({}, { __mode = "k" })
 
-    -- ★★ 「允许拖动分离成悬浮窗」的总闸 ★★
+    -- ★★ 「分区固定」的总闸 (PopOut 控制) ★★
     --   这是**唯一**决定分区能不能拖出的地方。默认 false (安全默认: 全部固定)。
     --   由「配置」页的开关读写它, 写入前后新建的分区都会按最新值处理。
     --
@@ -1650,14 +1524,12 @@ if Library then
 
     -- ★ Configuration 分区是"永远不许拖出"的黑名单: 它是 SaveManager 自动生成的,
     --   用户明确要求它必须固定 (旧版它能被拖成悬浮窗, 是个体验问题)。
-    --   「高级功能说明」是纯说明分区, 拖出去没有意义, 一并列入。
     --   「配置存档」自己传了 PopOut = false, 走它自己的硬编码。
     --   判定用分区名, 不区分大小写, 兼容 SaveManager 各版本命名。
     local function isBlacklistedGB(Info)
         local n = Info and Info.Name
         if type(n) ~= "string" then return false end
         if n:find("configuration", 1, true) then return true end
-        if n:find("高级功能说明", 1, true) then return true end
         return false
     end
 
@@ -1713,10 +1585,9 @@ if Library then
         local n = 0
         for _, box in ipairs(gbList or {}) do
             pcall(function()
-                -- 黑名单分区 (Configuration / 高级功能说明) 永远固定, 不受开关影响
+                -- 黑名单分区 (Configuration) 永远固定, 不受开关影响
                 local nm = tostring(box.Name or ""):lower()
                 local isBlack = nm:find("configuration", 1, true) ~= nil
-                             or nm:find("高级功能说明", 1, true) ~= nil
                 local want = enabled and not isBlack
                 if not want and box.PoppedOut and box.SetPoppedOut then
                     box:SetPoppedOut(false)        -- 先收回悬浮窗, 避免残留
@@ -1748,7 +1619,6 @@ if Library then
     -- ★现在才建页 —— 此时包装已就位, 这 4 个页一出生就是"不可拖出"的
     local Tabs = {
         ["防御"]     = Window:AddTab("防御", "shield"),
-        ["高级功能"] = Window:AddTab("高级功能", "radar"),
         ["脚本分支"] = Window:AddTab("脚本分支", "package"),
         ["配置"]     = Window:AddTab("配置", "settings"),
     }
@@ -1785,17 +1655,21 @@ if Library then
 
     local GB_Shield = Tabs["防御"]:AddGroupbox({ Side = 1, Name = "🛡 反踢护盾" })
     table.insert(GB_All, GB_Shield)
-    GB_Shield:AddToggle("AntiKickShield", {
-        Text = "🛡 ★ 反踢护盾 (拦截踢人远程 + 反作弊调用)",
-        Default = CONFIG.AntiKick_Shield,
-        Callback = function(v)
-            playToggleSound(v); CONFIG.AntiKick_Shield = v
-            if v then AntiKickShield.enable() else AntiKickShield.disable() end
+    GB_Shield:AddButton({
+        Text = "🛡 ★ 安装反踢护盾 (常驻, 可重复点)",
+        Callback = function()
+            playClickSound(); AntiKickShield.enable()
+        end,
+    })
+    GB_Shield:AddButton({
+        Text = "⏹ 停止反踢护盾",
+        Callback = function()
+            playClickSound(); AntiKickShield.disable()
         end,
     })
     PARA(GB_Shield, "🛡 反踢护盾说明",
-        "纯防御: 拦下 RequestPlayerKick 等踢人远程, 并阻断 LocalClean / CharacterControl 的本地调用, 循环禁用本机 CharacterControl。 "
-        .. "不修改任何游戏状态、不提供玩法优势。开启后控制台输入 EGG_AntiKickShield.stats() 查看拦截计数。")
+        "纯防御: 拦下 RequestPlayerKick 等踢人远程, 并阻断 LocalClean / CharacterControl 的本地调用; "
+        .. "RenderStepped 循环持续禁用本机 CharacterControl。点击即常驻安装, 可反复点击 (已装则提示, 不报错)。")
 
     local GB_Admin = Tabs["防御"]:AddGroupbox({ Side = 2, Name = "🛡 管理员防护" })
     table.insert(GB_All, GB_Admin)
@@ -1859,90 +1733,6 @@ if Library then
     -- ★ 设计原则: 只读、只标记, 不替你操作、不给任何战斗优势。
     --   统计对手命中率, 超阈值自动上『检测榜』并提醒; 显示其 昵称(Name) 与 显示名(DisplayName)。
     --   ★ 不检测队友 (同队跳过)。数据由游戏战斗事件喂入 (见引擎段 ★接入点)。
-    local GB_Info = Tabs["高级功能"]:AddGroupbox({ Side = 1, Name = "📡 高级功能说明" })
-    table.insert(GB_All, GB_Info)
-    PARA(GB_Info, "📡 检测 (命中率反作弊)",
-        "统计对手命中率, 超阈值(默认80%)自动上榜并提醒, 显示 昵称+显示名。\n"
-        .. "只观测、只标记, 不锁定/不躲避/不自动开枪。不检测队友。")
-    PARA(GB_Info, "🔌 数据来源",
-        "需把游戏开枪/命中事件接到脚本 ★接入点 (引擎段注释)。没接时榜单空, 正常。")
-
-    local GB_Main = Tabs["高级功能"]:AddGroupbox({ Side = 1, Name = "📡 高级功能总开关" })
-    table.insert(GB_All, GB_Main)
-    DetectionEnabledToggle = GB_Main:AddToggle("DetectionEnabled", {
-        Text = "📡 ★ 检测开关 (总开关)", Default = CONFIG.Detection_Enabled,
-        Callback = function(v) playToggleSound(v); CONFIG.Detection_Enabled = v
-            if v then notify("检测", "已开启 — 命中率超阈值的对手会进检测榜", 3, "success") else notify("检测", "已关闭", 2.5, "info") end end,
-    })
-    UI_Refs.DetectionEnabledToggle = DetectionEnabledToggle
-    DetectionThresholdSlider = GB_Main:AddSlider("DetectionThreshold", {
-        Text = "🎯 命中率阈值 (%)", Default = CONFIG.Detection_Threshold, Min = 50, Max = 100, Rounding = 0,
-        Callback = function(v) playSliderSound(); CONFIG.Detection_Threshold = v; notify("检测", "阈值设为 " .. v .. "%", 2, "info") end,
-    })
-    UI_Refs.DetectionThresholdSlider = DetectionThresholdSlider
-    DetectionMinShotsSlider = GB_Main:AddSlider("DetectionMinShots", {
-        Text = "🔫 最少射击数 (防偶然)", Default = CONFIG.Detection_MinShots, Min = 1, Max = 50, Rounding = 0,
-        Callback = function(v) playSliderSound(); CONFIG.Detection_MinShots = v end,
-    })
-    UI_Refs.DetectionMinShotsSlider = DetectionMinShotsSlider
-    DetectionIgnoreTeamToggle = GB_Main:AddToggle("DetectionIgnoreTeam", {
-        Text = "🤝 不检测队友 (同队跳过)", Default = CONFIG.Detection_IgnoreTeam,
-        Callback = function(v) playToggleSound(v); CONFIG.Detection_IgnoreTeam = v end,
-    })
-    UI_Refs.DetectionIgnoreTeamToggle = DetectionIgnoreTeamToggle
-    GB_Main:AddButton({ Text = "🔄 立即扫描 (刷新榜单)", Callback = function() playClickSound()
-        pcall(function() UI_Refs.detectionTick() end)
-        local l = {}; pcall(function() l = UI_Refs.detectionGetList() end)
-        local cb = UI_Refs.__detectListLabel
-        if cb and cb.SetText then cb:SetText((#l == 0) and "（检测榜为空 — 等待战斗数据）" or table.concat(l, "\n")) end
-        notify("检测", "已扫描 — 当前上榜 " .. #l .. " 人", 2.5, "info") end })
-    GB_Main:AddButton({ Text = "🗑 清空检测榜", Callback = function() playClickSound()
-        pcall(function() UI_Refs.detectionClear() end)
-        local cb = UI_Refs.__detectListLabel
-        if cb and cb.SetText then cb:SetText("（检测榜为空 — 等待战斗数据）") end end })
-
-    -- ★ 击中提示 (本地玩家打中敌人的反馈, 右上角)
-    local GB_Hit = Tabs["高级功能"]:AddGroupbox({ Side = 1, Name = "🎯 击中提示 (右上角)" })
-    table.insert(GB_All, GB_Hit)
-    GB_Hit:AddToggle("HitFeedbackEnabled", {
-        Text = "🎯 ★ 子弹击中提示", Default = CONFIG.HitFeedback_Enabled,
-        Callback = function(v) playToggleSound(v); CONFIG.HitFeedback_Enabled = v
-            notify("击中提示", v and "已开启 — 打中敌人右上角提示 + 踢人音效" or "已关闭", 2.5, v and "success" or "info") end,
-    })
-    GB_Hit:AddToggle("HitFeedbackMelee", {
-        Text = "🗡 近战击中提示", Default = CONFIG.HitFeedback_Melee,
-        Callback = function(v) playToggleSound(v); CONFIG.HitFeedback_Melee = v
-            notify("击中提示", v and "已开启 — 近战『已打中对面』, 不发声, 每次只显示 1 个" or "已关闭", 2.5, v and "success" or "info") end,
-    })
-    PARA(GB_Hit, "🎯 击中提示说明",
-        "子弹:『子弹已击中对面』+ 名字/昵称/扣血, 播踢人音效。\n"
-        .. "近战:『已打中对面』, 不发声; 提示栏每次只显示 1 个, 排队不挡视野。\n"
-        .. "只提示打中『敌人』, 打队友不提示。需接游戏伤害事件 (★接入点)。")
-
-    local GB_List = Tabs["高级功能"]:AddGroupbox({ Side = 2, Name = "📡 命中率检测榜 (>" .. tostring(CONFIG.Detection_Threshold) .. "%)" })
-    table.insert(GB_All, GB_List)
-    local detectListLabel = GB_List:AddLabel("（检测榜为空 — 等待战斗数据）", true)
-    UI_Refs.__detectListLabel = detectListLabel
-    GB_List:AddButton({ Text = "🧪 演示喂数据 (看效果)", Callback = function() playClickSound()
-        pcall(function()
-            for _=1,20 do UI_Refs.detectionNoteShot(900001) end
-            for _=1,19 do UI_Refs.detectionNoteHit(900001, 123) end
-            for _=1,10 do UI_Refs.detectionNoteShot(900002) end
-            for _=1,6  do UI_Refs.detectionNoteHit(900002, 123) end
-            for _=1,3  do UI_Refs.detectionNoteShot(900003) end
-            for _=1,3  do UI_Refs.detectionNoteHit(900003, 123) end
-            STATE.detection["900001"].name = "CheaterA"; STATE.detection["900001"].display = "锁头怪A"
-            STATE.detection["900002"].name = "NormalB";  STATE.detection["900002"].display = "正常人B"
-            STATE.detection["900003"].name = "LowShotC"; STATE.detection["900003"].display = "样本少C"
-        end)
-        pcall(function() UI_Refs.detectionTick() end)
-        local l = {}; pcall(function() l = UI_Refs.detectionGetList() end)
-        local cb = UI_Refs.__detectListLabel
-        if cb and cb.SetText then cb:SetText((#l == 0) and "（检测榜为空）" or table.concat(l, "\n")) end
-        notify("检测", "演示完成 — 上榜的应只有 CheaterA(95%); B(60%) 与 C(射击不足) 不上榜", 4, "info") end })
-    PARA(GB_List, "📡 检测榜说明",
-        "上榜 = 命中率 ≥ 阈值 且 射击数 ≥ 最少射击数 的对手。\n"
-        .. "格式: 显示名 · @昵称 · 命中率% (命中/射击)。只标记、不操作。")
     --//===================== 配置页
     local GB_WL = Tabs["配置"]:AddGroupbox({ Side = 1, Name = "📝 白名单 (只保护本服玩家)" })
     table.insert(GB_All, GB_WL)
@@ -1996,9 +1786,9 @@ if Library then
 
     -- (触摸音效已按你的要求移除; 如需恢复见备份文件)
 
-    -- ★拖动分离悬浮窗开关 (总闸): 控制功能分区能否被拖出成独立悬浮小窗
+    -- ★分区固定机制 (PopOut 总闸): 决定功能分区能否被拖出成独立悬浮小窗
     --   默认关 —— 每次进游戏都从"固定"开始, 避免误拖出一堆小窗。
-    --   注意: 本开关**不会被 SaveManager 保存/恢复** (见上方 SetIgnoreIndexes({ "DragPopout" })),
+    --   注意: 固定状态**不会**被 SaveManager 保存/恢复 (见上方 SetIgnoreIndexes({ "DragPopout" })),
     --         属"安全默认"项, 必须每次手动开。
     local function applyPopoutSetting(enabled)
         UI_Refs.setPopOutAllowed(enabled)
@@ -2019,21 +1809,6 @@ if Library then
     end
     UI_Refs.applyPopoutSetting = applyPopoutSetting
 
-    DragPopoutToggle = GB_Conf:AddToggle("DragPopout", {
-        Text = "🪟 允许拖动分离成悬浮窗 (默认关)",
-        Default = CONFIG.UI_DragPopout,
-        Callback = function(v)
-            playToggleSound(v); CONFIG.UI_DragPopout = v; applyPopoutSetting(v)
-            notify("界面", v and "已开启 -- 可按住分区标题拖出成小窗 (设置/配置存档等分区仍固定)"
-                            or "已关闭 -- 功能分区固定, 不可拖出", 3, v and "success" or "info")
-        end,
-    })
-    UI_Refs.DragPopoutToggle = DragPopoutToggle
-    PARA(GB_Conf, "🪟 拖动说明",
-        "关闭 (默认): 按住功能区域标题拖动不会把它变成悬浮小窗, 分区固定。\n"
-        .. "开启后: 可按住分区标题拖出, 变成独立小悬浮窗; 再拖回原位附近会自动吸附归位。\n"
-        .. "★ 「高级功能说明」「配置存档」以及原生 Configuration 分区始终固定, 不受本开关影响。\n"
-        .. "★ 本开关不随配置保存, 每次进游戏都要手动开启 (安全默认)。")
 
     GB_Conf:AddButton({ Text = "↩ 重置所有设置为默认", Callback = function()
         playClickSound()
@@ -2047,14 +1822,10 @@ if Library then
         setVal("KickNotifyToggle", true)
         setVal("KickSoundToggle", true)
         setVal("WarnToggle", true)
-        setVal("DetectionEnabledToggle", true)
-        setVal("DetectionThresholdSlider", 80)
-        setVal("DetectionMinShotsSlider", 10)
-        setVal("DetectionIgnoreTeamToggle", true)
         setVal("StartupSoundToggle", true)
         CONFIG.AntiKick_AutoKick = false; CONFIG.AntiKick_Enabled = false; CONFIG.AntiKick_KickInterval = 2.0
         CONFIG.Kick_Notify = true; CONFIG.Kick_Notify_Sound = true; CONFIG.Warn_OnVoted = true
-        CONFIG.Detection_Enabled = true; CONFIG.Detection_Threshold = 80; CONFIG.Detection_MinShots = 10; CONFIG.Detection_IgnoreTeam = true; CONFIG.Startup_Sound = true
+        CONFIG.Startup_Sound = true
         CONFIG.Whitelist = {}; CONFIG.Admin_AutoLeave = false; CONFIG.Admin_GroupId = 0; CONFIG.Admin_Names = {}
         setVal("AdminLeaveToggle", false)
         setVal("AdminGroupBox", "")
@@ -2139,142 +1910,46 @@ if Library then
     -- 预设清单: { 标题, 类型("url"/"inline"), 内容 }
     local PRESETS = {
         { "🔫 无限子弹 (塔菲)", "url", "https://raw.githubusercontent.com/sdacrdroblox120/duikn/refs/heads/main/%E5%A1%94%E8%8F%B2%E8%84%9A%E6%9C%AC.txt" },
-{ "👻 Desync 隐身 (白方块修复版)", "inline", [==[
--- Desync 隐身 (白方块修复版) — 内置源码
---
--- ★ 修复内容: 关闭隐身时不再把角色所有部件透明度统一写 0, 而是还原成
---   开启前记录的原始透明度。原版统一写 0 会把默认全透明的 HumanoidRootPart
---   (2x2x1, 卡在躯干位置) 变成实心方块 —— 这就是"关闭隐身后身上一层白方块"的根因。
---
--- ★ 说明: Desync 位移本身依赖游戏的位移处理实现, 非通用脚本。
---   本脚本所测游戏服务端有位置校验/回拉, "本体留在原地"可能不生效。
---[[
-  Desync 隐身 — 白方块修复版
-  ============================================================
-  【原版问题】
-    原版 disableDesync 里写的是 setTrans(c, 0) —— 把角色身上所有 BasePart / Decal
-    的 Transparency 一律硬写成 0（完全不透明）。
-
-    但 Roblox 角色身上**本来就有透明部件**，最典型的是:
-      · HumanoidRootPart  —— R6/R15 默认 Transparency = 1（完全透明）
-      · 部分配饰的 Handle / 一些游戏自定义的隐藏部件
-      · Head 上的 face Decal（通常 Transparency = 0，但也有例外）
-
-    于是"关闭隐身"这个动作，把本该隐形的 HumanoidRootPart 变成了一个实心方块。
-    HumanoidRootPart 尺寸 2×2×1，正好卡在躯干位置 —— 看起来就是身上多了一层白方块。
-    重生后角色重建，Transparency 回到默认值 1，白方块消失。现象完全吻合。
-
-  【修法】
-    开启隐身前，先把每个部件的原始 Transparency 记下来；
-    关闭时逐件还原成记录值，而不是统一写 0。
-    —— 除此之外，其余逻辑与原版保持完全一致（Seat + Weld + 透明度），
-       不动配饰、不动衣服、不改质量、不碰网络所有权。
-
-  【保留的行为】
-    · 开启时把角色显示为半透明（默认 0.7），便于自己看位置
-    · 关闭时完全恢复原来的外观
-    · Seat 作为 desync 锚点，关闭时销毁
-]]
-
-local Players   = game:GetService("Players")
+        { "👻 Desync 隐身 (修复版)", "inline", [==[
+-- Desync隐身 修复版 独立脚本
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 local Workspace = game:GetService("Workspace")
 
-local LocalPlayer = Players.LocalPlayer
-local CoreGui = (pcall(function() return game:GetService("CoreGui") end)
-                  and game:GetService("CoreGui"))
-                 or LocalPlayer:WaitForChild("PlayerGui")
-
--- ============================================================
--- 配置（与原版一致）
--- ============================================================
-local desyncTransparency = 0.7    -- 开启隐身时自己看到的透明度
-
--- ============================================================
--- 状态
--- ============================================================
 local desyncActive = false
-local invisSeat    = nil
-local invisWeld    = nil
-
--- ★新增：记录原始透明度，关闭时还原（这是修掉白方块的关键）
---   originals[部件] = 开启隐身前的 Transparency
-local originals = {}
+local desyncTransparency = 0.7
+local invisSeat = nil
+local invisWeld = nil
 
 local function getRoot(c)
-    return c:FindFirstChild("HumanoidRootPart")
-        or c:FindFirstChild("Torso")
-        or c:FindFirstChild("UpperTorso")
+    return c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso")
 end
 
 local function getTorso(c)
-    return c:FindFirstChild("Torso")
-        or c:FindFirstChild("UpperTorso")
+    return c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso")
 end
 
--- 目标部件判定：与原版一致（BasePart 或 Decal）
-local function isTarget(p)
-    return p:IsA("BasePart") or p:IsA("Decal")
-end
-
--- 开启时：记录原值 + 设为隐身透明度
-local function applyInvisible(c, t)
+local function setTrans(c, t)
     for _, p in pairs(c:GetDescendants()) do
-        if isTarget(p) then
-            -- ★记录原值（只记一次，避免重复开启时把"隐身中的值"当成原值）
-            if originals[p] == nil then
-                local ok, orig = pcall(function() return p.Transparency end)
-                originals[p] = ok and orig or 0
-            end
+        if p:IsA("BasePart") or p:IsA("Decal") then
             pcall(function() p.Transparency = t end)
         end
     end
 end
 
--- ★关闭时：还原成记录的原值（不再统一写 0）
---   —— 这是修掉"关闭后身上出现白方块"的核心。
---      旧版 setTrans(c, 0) 会把 HumanoidRootPart（默认透明度 1）强行变成不透明，
---      那个 2×2×1 的方块就套在躯干位置，看起来就是一层白方块。
-local function restoreVisibility(c)
-    -- 逐件还原成开启前记录的原始值
-    for p, orig in pairs(originals) do
-        pcall(function() p.Transparency = orig end)
-    end
-
-    -- 兜底：只处理"没被记录到"的情况（例如开启隐身之后才动态生成的部件）。
-    --   注意这里**绝不能**统一写 0 —— 那正是旧版的 bug。
-    --   做法：对没记录的部件不做任何改动，只把 HumanoidRootPart 这一个
-    --   有明确默认值的部件（Roblox 角色里它恒为全透明）补正。
-    if c then
-        for _, p in pairs(c:GetDescendants()) do
-            if originals[p] == nil and isTarget(p) then
-                pcall(function()
-                    if p.Name == "HumanoidRootPart" and p.Transparency ~= 1 then
-                        p.Transparency = 1
-                    end
-                end)
-            end
-        end
-    end
-
-    originals = {}
-end
-
--- ============================================================
--- 开启 / 关闭（结构与原版一致）
--- ============================================================
 local function enableDesync()
     if desyncActive then return end
-
+    
     local c = LocalPlayer.Character
     if not c then
         task.wait(0.2)
         c = LocalPlayer.Character
         if not c then return end
     end
-
+    
     local r = getRoot(c)
     local t = getTorso(c)
-
+    
     if not r or not t then
         task.wait(0.3)
         c = LocalPlayer.Character
@@ -2284,80 +1959,38 @@ local function enableDesync()
         end
         if not r or not t then return end
     end
-
+    
     c:MoveTo(r.Position)
     task.wait(0.15)
-
+    
     if invisSeat then invisSeat:Destroy() end
-
+    
     invisSeat = Instance.new("Seat", Workspace)
-    invisSeat.Anchored     = false
-    invisSeat.CanCollide   = false
+    invisSeat.Anchored = false
+    invisSeat.CanCollide = false
     invisSeat.Transparency = 1
-    invisSeat.Size         = Vector3.new(2, 1, 1)
-    invisSeat.Position     = r.Position
-    -- ★顺手把 Seat 的面纹理关掉：Seat 默认带 Studs 面，是"白方块"的另一个可能来源
-    pcall(function() invisSeat.TopSurface    = Enum.SurfaceType.Smooth end)
-    pcall(function() invisSeat.BottomSurface = Enum.SurfaceType.Smooth end)
-    pcall(function() invisSeat.CastShadow    = false end)
-
+    invisSeat.Size = Vector3.new(2, 1, 1)
+    invisSeat.Position = r.Position
+    
     invisWeld = Instance.new("Weld", invisSeat)
     invisWeld.Part0 = invisSeat
     invisWeld.Part1 = t
-
+    
     task.wait(0.1)
-
-    -- ★开启前先清空记录，避免上一轮残留
-    originals = {}
-    applyInvisible(c, desyncTransparency)
-
+    setTrans(c, desyncTransparency)
     desyncActive = true
 end
 
 local function disableDesync()
     desyncActive = false
-
-    if invisSeat then
-        invisSeat:Destroy()
-        invisSeat = nil
-        invisWeld = nil
-    end
-
+    if invisSeat then invisSeat:Destroy(); invisSeat = nil; invisWeld = nil end
     local c = LocalPlayer.Character
-    -- ★关键修复：还原原值，而不是 setTrans(c, 0)
-    restoreVisibility(c)
+    if c then setTrans(c, 0) end
 end
 
--- 角色重生时清空记录（新角色是全新的部件，旧记录无意义）
-LocalPlayer.CharacterAdded:Connect(function()
-    desyncActive = false
-    if invisSeat then pcall(function() invisSeat:Destroy() end) end
-    invisSeat, invisWeld = nil, nil
-    originals = {}
-end)
-
--- ============================================================
--- 对外 API
--- ============================================================
-_G.DesyncInvisible = {
-    enable  = enableDesync,
-    disable = disableDesync,
-    toggle  = function()
-        if desyncActive then disableDesync() else enableDesync() end
-    end,
-    status  = function()
-        print("[Desync] 状态: " .. (desyncActive and "开启中" or "已关闭"))
-        return desyncActive
-    end,
-}
-
--- ============================================================
--- UI（与原版风格一致）
--- ============================================================
-local gui = Instance.new("ScreenGui")
+-- UI
+local gui = Instance.new("ScreenGui", game.CoreGui)
 gui.Name = "DesyncStandalone"
-gui.ResetOnSpawn = false
-gui.Parent = CoreGui
 
 local frame = Instance.new("Frame", gui)
 frame.Size = UDim2.new(0, 160, 0, 60)
@@ -2401,7 +2034,7 @@ toggle.MouseButton1Click:Connect(function()
     end
 end)
 
-print("[Desync] 隐身已加载 (白方块已修: 关闭时还原原始透明度, 不再统一写 0)")
+print("Desync隐身 修复版 已加载")
 ]==] },
         { "✈ 飞行 V3", "url", "https://raw.githubusercontent.com/XNEOFF/FlyGuiV3/main/FlyGuiV3.txt" },
         { "🧩 通用脚本 (Loader)", "url", "https://raw.githubusercontent.com/Jilxi/123/refs/heads/main/Loader.lua" },
@@ -2409,8 +2042,8 @@ print("[Desync] 隐身已加载 (白方块已修: 关闭时还原原始透明度
         { "🕺 R6 动作脚本", "url", "https://raw.githubusercontent.com/sypcerr/FECollection/refs/heads/main/script.lua" },
         { "⚔ 血与铁菜单 (5年前)", "url", "https://pastebin.com/raw/Fk7xMTNX" },
         { "⚔ VAPE V4", "url", "https://raw.githubusercontent.com/7GrandDadPGN/VapeV4ForRoblox/main/NewMainScript.lua" },
-        { "⚔ 血与铁 林默决", "url", "https://raw.githubusercontent.com/sleenndn/Matds/refs/heads/main/bi2.0" },
-        { "⚔ 血与铁 序言", "url", "https://raw.githubusercontent.com/Matds78/Script/refs/heads/main/Blood%26Iron" },
+        { "⚔ 血与铁 序言", "url", "https://raw.githubusercontent.com/sleenndn/Matds/refs/heads/main/bi2.0" },
+        { "⚔ 血与铁 林默决", "url", "https://raw.githubusercontent.com/Matds78/Script/refs/heads/main/Blood%26Iron" },
     }
     for _, item in ipairs(PRESETS) do
         local title, kind, content = item[1], item[2], item[3]
@@ -2636,15 +2269,14 @@ print("[Desync] 隐身已加载 (白方块已修: 关闭时还原原始透明度
     --     · SaveManager 的原生「Configuration」分区 (它内部是 Tab:AddGroupbox({...}) 不带 PopOut,
     --       会吃库默认值 true —— 这正是"配置页里那块原生配置还能拖成悬浮窗"的根源)
     --     · SaveManager 异步恢复配置时可能重建的分区
-    --   注意: 这里**不能**无条件把所有分区压成 false, 否则「允许拖动分离成悬浮窗」开关就永远失效了。
-    --   只处理黑名单 (Configuration / 高级功能说明), 其余尊重总闸。
+    --   注意: 这里**不能**无条件把所有分区压成 false, 否则配置页分区会全被锁死 (无法按总闸放开)。
+    --   只处理黑名单 (Configuration), 其余尊重总闸。
     pcall(function()
         for _, Tab in pairs(Tabs) do
             for name, gb in pairs(Tab.Groupboxes or {}) do
                 pcall(function()
                     local nm = tostring(gb.Name or ""):lower()
                     local isBlack = nm:find("configuration", 1, true)
-                                 or nm:find("高级功能说明", 1, true)
                     if isBlack then
                         if gb.PoppedOut and gb.SetPoppedOut then gb:SetPoppedOut(false) end
                         if gb.PopOutEnabled ~= false then
@@ -2668,7 +2300,6 @@ print("[Desync] 隐身已加载 (白方块已修: 关闭时还原原始透明度
                     pcall(function()
                         local nm = tostring(gb.Name or ""):lower()
                         local isBlack = nm:find("configuration", 1, true)
-                                     or nm:find("高级功能说明", 1, true)
                         if isBlack then
                             if gb.PoppedOut and gb.SetPoppedOut then gb:SetPoppedOut(false) end
                             gb.PopOutEnabled = false
@@ -2743,10 +2374,6 @@ local function applySavedToEngine()
     if R.KickNotifyToggle  then CONFIG.Kick_Notify           = val("KickNotifyToggle", CONFIG.Kick_Notify) end
     if R.KickSoundToggle   then CONFIG.Kick_Notify_Sound     = val("KickSoundToggle", CONFIG.Kick_Notify_Sound) end
     if R.WarnToggle        then CONFIG.Warn_OnVoted          = val("WarnToggle", CONFIG.Warn_OnVoted) end
-    if R.DetectionEnabledToggle then CONFIG.Detection_Enabled      = val("DetectionEnabledToggle", CONFIG.Detection_Enabled) end
-    if R.DetectionThresholdSlider then CONFIG.Detection_Threshold = val("DetectionThresholdSlider", CONFIG.Detection_Threshold) end
-    if R.DetectionMinShotsSlider then CONFIG.Detection_MinShots  = val("DetectionMinShotsSlider", CONFIG.Detection_MinShots) end
-    if R.DetectionIgnoreTeamToggle then CONFIG.Detection_IgnoreTeam = val("DetectionIgnoreTeamToggle", CONFIG.Detection_IgnoreTeam) end
     if R.StartupSoundToggle then CONFIG.Startup_Sound        = val("StartupSoundToggle", CONFIG.Startup_Sound) end
 
     -- ★拖动分离开关已整体删除 (所有分区固定), 这里只保留一次保险, 防止旧配置文件把它写回开启
