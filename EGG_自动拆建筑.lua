@@ -3,8 +3,8 @@
 -- 说明：玩家判定检测极苛刻，隔空打不到玩家 → 本脚本【只拆建筑，不做打玩家】
 -- 改进点汇总：
 --   距离可开关(0=全图) · 门正常持续拆 / 玻璃只拆一次就跳下一个 · 门玻璃开关 ·
---   可折叠面板 · 高亮建筑(可开关, 不标门/窗) · 列出建筑 · 同时拆多目标+连击 ·
---   多近战武器自动识别(含骑兵战马) · 目标高亮 · 销毁
+--   可折叠面板 · 列出建筑 · 同时拆多目标+连击 ·
+--   多近战武器自动识别(含骑兵战马) · 销毁
 --   无阵营检测(建筑队友也能破, 无阵营之分) · 拆除速度(0~10秒, 可小数)
 
 local Players        = game:GetService("Players")
@@ -15,7 +15,6 @@ local lp = Players.LocalPlayer
 -- ==================== 配置 ====================
 local CFG = {
     allowDoorGlass = false,    -- 是否拆门/玻璃：false=不拆(默认), true=也拆
-    highlight      = true,     -- 高亮建筑(可开关)；门/窗不标
     range          = 0,        -- 范围限制(米)：0=全图隔空拆；>0 表示只拆 range 米内
     speed          = 0.6,      -- 拆除速度(秒)：每多少秒发一轮伤害。0=最快, 最高10, 可小数
     hitsPerTick    = 2,        -- 每个目标每轮连击次数(加速单座拆除)；调大更快但有 flood 风险
@@ -27,9 +26,6 @@ local CFG = {
     -- 门+玻璃合并(用于"拆门玻璃"总开关的跳过判定)
     doorGlassWords = { "door", "gate", "glass", "window", "pane", "portcullis",
                        "shutter", "barrier_door", "glasspane", "windoor" },
-    -- 不标到高亮里的(门/窗)：命中即不画高亮框
-    noHLWords = { "door", "gate", "glass", "window", "pane", "portcullis",
-                  "shutter", "barrier_door", "glasspane", "windoor" },
     blacklist      = {},       -- 其它永久黑名单：命中即跳过(暂无，按需增补)
     -- 白名单(whiteMode=true 时生效)：真正的军事防御建筑，按你实测名字增补
     whitelist  = { "barricade", "sandbag", "sand", "wall", "palisade", "abatis",
@@ -302,7 +298,7 @@ local foldBtn = Instance.new("TextButton")
 foldBtn.Size = UDim2.new(0, 24, 0, 22)
 foldBtn.Position = UDim2.new(1, -28, 0, 4)
 foldBtn.BackgroundTransparency = 1
-foldBtn.Text = "▾"
+foldBtn.Text = "-"   -- 展开态用 "-"(点它折叠)；折叠态用 "+"。避免字体不支持三角字符显示成方块
 foldBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
 foldBtn.TextSize = 16
 foldBtn.Font = Enum.Font.GothamBold
@@ -360,16 +356,15 @@ end
 
 local toggleBtn = mkBtn("已关闭", 34)
 local doorGlassBtn = mkBtn("拆门玻璃: 关", 70)
-local highlightBtn = mkBtn("高亮: 开", 106)
-local rangeBox  = mkBox(142, "范围(0=全图, 米)")
+local rangeBox  = mkBox(106, "范围(0=全图, 米)")
 rangeBox.Text = tostring(CFG.range)
-local speedBox  = mkBox(176, "拆除速度(0~10秒)")
+local speedBox  = mkBox(140, "拆除速度(0~10秒)")
 speedBox.Text = tostring(CFG.speed)
 
 local listBtn    = mkBtn("列出建筑", 210, 90)
 local destroyBtn = mkBtn("销毁", 210, 90)
-listBtn.Position = UDim2.new(0, 8, 0, 174)
-destroyBtn.Position = UDim2.new(1, -98, 0, 174)
+listBtn.Position = UDim2.new(0, 8, 0, 210)
+destroyBtn.Position = UDim2.new(1, -98, 0, 210)
 destroyBtn.BackgroundColor3 = Color3.fromRGB(140, 40, 40)
 
 local function setStatus(t) status.Text = t end
@@ -379,7 +374,7 @@ local collapsed = false
 foldBtn.Activated:Connect(function()
     collapsed = not collapsed
     body.Visible = not collapsed
-    foldBtn.Text = collapsed and "▸" or "▾"
+    foldBtn.Text = collapsed and "+" or "-"
     frame.Size = collapsed and UDim2.new(0, 200, 0, 28) or UDim2.new(0, 200, 0, 268)
 end)
 
@@ -401,15 +396,9 @@ end)
 doorGlassBtn.Activated:Connect(function()
     CFG.allowDoorGlass = not CFG.allowDoorGlass
     doorGlassBtn.Text = "拆门玻璃: " .. (CFG.allowDoorGlass and "开" or "关")
+    -- 开启时按钮变红, 关闭时恢复灰
+    doorGlassBtn.BackgroundColor3 = CFG.allowDoorGlass and Color3.fromRGB(200, 60, 60) or Color3.fromRGB(60, 60, 70)
     if not CFG.allowDoorGlass then glassHitOnce = {} end   -- 关掉时清空"已拆一次"记录
-end)
-
-highlightBtn.Activated:Connect(function()
-    CFG.highlight = not CFG.highlight
-    highlightBtn.Text = "高亮: " .. (CFG.highlight and "开" or "关")
-    if not CFG.highlight and hlBox then
-        pcall(function() hlBox:Destroy() end); hlBox = nil
-    end
 end)
 
 rangeBox.FocusLost:Connect(function()
@@ -436,23 +425,8 @@ end)
 
 destroyBtn.Activated:Connect(function()
     ENABLED = false
-    if hlBox then pcall(function() hlBox:Destroy() end); hlBox = nil end
     pcall(function() sg:Destroy() end)
 end)
-
--- ==================== 高亮 ====================
-local hlBox = nil
-local function setHighlight(target)
-    if hlBox then pcall(function() hlBox:Destroy() end); hlBox = nil end
-    if CFG.highlight and target and target.centre and target.centre.Parent then
-        local sb = Instance.new("SelectionBox")
-        sb.Adornee = target.centre
-        sb.Color3 = Color3.fromRGB(255, 60, 60)
-        sb.LineThickness = 0.05
-        sb.Parent = target.centre
-        hlBox = sb
-    end
-end
 
 -- ==================== 主循环 ====================
 local lastTime = 0
@@ -477,7 +451,6 @@ RunService.Heartbeat:Connect(function()
     local list = findBuildings()
     if #list == 0 then
         setStatus("无合法目标(过滤后)" .. " | 武器:" .. wname)
-        setHighlight(nil)
         return
     end
 
@@ -504,14 +477,6 @@ RunService.Heartbeat:Connect(function()
             end
         end
     end
-    -- 高亮：选最近且【非门/非窗】的建筑标记(门/窗不在高亮里)
-    local hlTarget = nil
-    for i = 1, #list do
-        if not nameHas(list[i].name, CFG.noHLWords) then
-            hlTarget = list[i]; break
-        end
-    end
-    setHighlight(hlTarget)
     local nearest = list[1]
     setStatus(("拆(%s): %d 个 | 最近 %s (%.0fm)"):format(wname, #list, nearest.name, nearest.dist))
     task.spawn(function() pcall(playSwing, wname) end)  -- 视觉动画异步播
