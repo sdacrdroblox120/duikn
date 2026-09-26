@@ -2,8 +2,10 @@
 -- 支持自动识别近战武器拆建筑：SapperAxe(工兵斧)/Musket(刺刀)/Sabre(宝剑)
 -- 说明：玩家判定检测极苛刻，隔空打不到玩家 → 本脚本【只拆建筑，不做打玩家】
 -- 改进点汇总：
---   距离可开关(0=全图) · 黑名单过滤门/玻璃 · 阵营检测 · 门玻璃开关 ·
---   列出建筑 · 同时拆多目标+连击 · 多近战武器自动识别 · 目标高亮 · 销毁
+--   距离可开关(0=全图) · 门正常持续拆 / 玻璃只拆一次就跳下一个 · 门玻璃开关 ·
+--   可折叠面板 · 高亮建筑(可开关, 不标门/窗) · 列出建筑 · 同时拆多目标+连击 ·
+--   多近战武器自动识别(含骑兵战马) · 目标高亮 · 销毁
+--   无阵营检测(建筑队友也能破, 无阵营之分) · 拆除速度(0~10秒, 可小数)
 
 local Players        = game:GetService("Players")
 local RunService     = game:GetService("RunService")
@@ -12,23 +14,32 @@ local lp = Players.LocalPlayer
 
 -- ==================== 配置 ====================
 local CFG = {
-    teamFilter     = true,     -- 阵营检测：true=只拆敌方(跳过自家)；探测不到归属时仍拆
     allowDoorGlass = false,    -- 是否拆门/玻璃：false=不拆(默认), true=也拆
-    range          = 0,        -- 距离限制：<=0 表示全图隔空拆；>0 表示只拆 range 米内
-    interval       = 0.6,      -- 攻击节奏(秒)。太快可能触发反作弊 flood，拆不动就调大
+    highlight      = true,     -- 高亮建筑(可开关)；门/窗不标
+    range          = 0,        -- 范围限制(米)：0=全图隔空拆；>0 表示只拆 range 米内
+    speed          = 0.6,      -- 拆除速度(秒)：每多少秒发一轮伤害。0=最快, 最高10, 可小数
     hitsPerTick    = 2,        -- 每个目标每轮连击次数(加速单座拆除)；调大更快但有 flood 风险
     whiteMode      = false,    -- 白名单模式：true=只拆 whitelist 命中的；false=黑名单之外都拆
-    -- 门/玻璃类关键词：allowDoorGlass=false 时命中即跳过(你已实测这些名无误)
+    -- 门(可拆, 非无敌)：开启"拆门玻璃"后【正常持续拆】, 不受"只拆一次"限制
+    doorWords = { "door", "gate", "portcullis", "shutter", "barrier_door" },
+    -- 玻璃/窗类(框架无敌拆不掉)：拆一次就标记跳过、跳下一个目标, 不空耗连击
+    glassWords = { "glass", "window", "pane", "glasspane", "windoor" },
+    -- 门+玻璃合并(用于"拆门玻璃"总开关的跳过判定)
     doorGlassWords = { "door", "gate", "glass", "window", "pane", "portcullis",
                        "shutter", "barrier_door", "glasspane", "windoor" },
+    -- 不标到高亮里的(门/窗)：命中即不画高亮框
+    noHLWords = { "door", "gate", "glass", "window", "pane", "portcullis",
+                  "shutter", "barrier_door", "glasspane", "windoor" },
     blacklist      = {},       -- 其它永久黑名单：命中即跳过(暂无，按需增补)
     -- 白名单(whiteMode=true 时生效)：真正的军事防御建筑，按你实测名字增补
     whitelist  = { "barricade", "sandbag", "sand", "wall", "palisade", "abatis",
                    "fort", "rampart", "redoubt", "bunker", "blockade", "che",
                    "parapet", "emplacement", "trench", "keep", "shield",
                    "spike", "stake", "cover", "platform" },
-    highlight  = true,         -- 高亮当前最近目标(SelectionBox)
 }
+
+-- 玻璃框架无敌：记录已拆过一次的玻璃目标，之后跳过(只拆一次就找下一个)。门不属于此类
+local glassHitOnce = {}
 
 -- 支持的近战武器(拆建筑用)：名字 -> 命中盒路径
 --   SapperAxe 工兵斧  : Character.SapperAxe.MeleeHitBox.HitConstruct
@@ -70,29 +81,6 @@ local function nameHas(name, tbl)
     return false
 end
 
--- 探测建筑归属：返回 "own" / "enemy" / "neutral" / "unknown"
-local function getTeam(model)
-    local ok, res = pcall(function()
-        local tv = model:FindFirstChild("Team") or model:FindFirstChild("OwningTeam")
-                or model:FindFirstChild("OwnerTeam") or model:FindFirstChild("TeamValue")
-        if tv and tv.Value ~= nil then return tv.Value end
-        return model:GetAttribute("Team") or model:GetAttribute("OwningTeam")
-             or model:GetAttribute("Owner")
-    end)
-    if not ok or res == nil then return "unknown" end
-    local myTeam = lp.Team
-    if type(res) == "string" then
-        if myTeam and myTeam.Name == res then return "own" end
-        if res == "" or string.find(string.lower(res), "neutral") then return "neutral" end
-        return "enemy"
-    end
-    if typeof(res) == "Instance" then
-        if myTeam and (res == myTeam or res.Name == myTeam.Name) then return "own" end
-        return "enemy"
-    end
-    return "unknown"
-end
-
 -- 目标合法性：返回 ok, 跳过原因, model, 名字
 local function checkTarget(centre, myPos)
     local model = centre:FindFirstAncestorOfClass("Model") or centre
@@ -107,12 +95,6 @@ local function checkTarget(centre, myPos)
     end
     if not reason and CFG.whiteMode and not nameHas(name, CFG.whitelist) then
         reason = "非白名单"
-    end
-    if not reason and CFG.teamFilter then
-        local t = getTeam(model)
-        if t == "own" then reason = "自家" end
-        -- 中立建筑默认当可拆；如不想拆中立，把下一行注释打开：
-        -- if t == "neutral" then reason = "中立" end
     end
     if not reason and CFG.range > 0 then
         if (centre.Position - myPos).Magnitude > CFG.range then reason = "超距" end
@@ -275,13 +257,12 @@ local function listBuildings()
             local d = (v.Position - myPos).Magnitude
             local blocked = (not CFG.allowDoorGlass and nameHas(model.Name, CFG.doorGlassWords))
                 and " [门/玻璃-跳过]" or (nameHas(model.Name, CFG.blacklist) and " [黑名单-跳过]" or "")
-            local team = getTeam(model)
-            print(("[%.0fm] %s | Team=%s%s"):format(d, model.Name, team, blocked))
+            print(("[%.0fm] %s%s"):format(d, model.Name, blocked))
             n = n + 1
         end
     end
     print(("===== 共 %d 个 ConstructCentre ====="):format(n))
-    print("提示：门/玻璃真名若不在黑名单里，请加到脚本顶部 CFG.doorGlassWords")
+    print("提示：门/玻璃真名若不在表里，请加到脚本顶部 CFG.doorGlassWords；玻璃类只拆一次见 CFG.glassWords")
 end
 
 -- ==================== UI ====================
@@ -293,7 +274,7 @@ sg.DisplayOrder = 999
 sg.Parent = lp:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 200, 0, 250)
+frame.Size = UDim2.new(0, 200, 0, 268)
 frame.Position = UDim2.new(1, -210, 0, 80)
 frame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 frame.BackgroundTransparency = 0.15
@@ -308,8 +289,8 @@ stroke.Thickness = 1.5
 stroke.Transparency = 0.3
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 22)
-title.Position = UDim2.new(0, 0, 0, 4)
+title.Size = UDim2.new(1, -28, 0, 22)
+title.Position = UDim2.new(0, 6, 0, 4)
 title.BackgroundTransparency = 1
 title.Text = "自动拆建筑·多兵种"
 title.TextColor3 = Color3.fromRGB(255, 100, 100)
@@ -317,16 +298,34 @@ title.TextSize = 13
 title.Font = Enum.Font.GothamBold
 title.Parent = frame
 
+local foldBtn = Instance.new("TextButton")
+foldBtn.Size = UDim2.new(0, 24, 0, 22)
+foldBtn.Position = UDim2.new(1, -28, 0, 4)
+foldBtn.BackgroundTransparency = 1
+foldBtn.Text = "▾"
+foldBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
+foldBtn.TextSize = 16
+foldBtn.Font = Enum.Font.GothamBold
+foldBtn.Parent = frame
+
+-- 折叠容器：装所有控件；折叠时隐藏
+local body = Instance.new("Frame")
+body.Size = UDim2.new(0, 200, 0, 240)
+body.Position = UDim2.new(0, 0, 0, 28)
+body.BackgroundTransparency = 1
+body.BorderSizePixel = 0
+body.Parent = frame
+
 local status = Instance.new("TextLabel")
 status.Size = UDim2.new(1, -12, 0, 30)
-status.Position = UDim2.new(0, 6, 0, 26)
+status.Position = UDim2.new(0, 6, 0, 0)
 status.BackgroundTransparency = 1
 status.Text = "未开启"
 status.TextColor3 = Color3.fromRGB(200, 200, 200)
 status.TextSize = 12
 status.Font = Enum.Font.Gotham
 status.TextWrapped = true
-status.Parent = frame
+status.Parent = body
 
 local function mkBtn(text, y, w)
     local b = Instance.new("TextButton")
@@ -339,34 +338,50 @@ local function mkBtn(text, y, w)
     b.Font = Enum.Font.GothamBold
     b.BorderSizePixel = 0
     b.Active = true
-    b.Parent = frame
+    b.Parent = body
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
     return b
 end
 
-local toggleBtn = mkBtn("已关闭", 60)
-local teamBtn   = mkBtn("阵营检测: 开", 96)
-local doorGlassBtn = mkBtn("拆门玻璃: 关", 132)
-local rangeBox  = Instance.new("TextBox")
-rangeBox.Size = UDim2.new(0, 184, 0, 28)
-rangeBox.Position = UDim2.new(0.5, -92, 0, 168)
-rangeBox.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-rangeBox.Text = tostring(CFG.range)
-rangeBox.PlaceholderText = "距离(0=全图)"
-rangeBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-rangeBox.TextSize = 13
-rangeBox.Font = Enum.Font.Gotham
-rangeBox.ClearTextOnFocus = false
-rangeBox.Parent = frame
-Instance.new("UICorner", rangeBox).CornerRadius = UDim.new(0, 6)
+local function mkBox(y, ph)
+    local t = Instance.new("TextBox")
+    t.Size = UDim2.new(0, 184, 0, 28)
+    t.Position = UDim2.new(0.5, -92, 0, y)
+    t.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    t.TextColor3 = Color3.fromRGB(255, 255, 255)
+    t.TextSize = 13
+    t.Font = Enum.Font.Gotham
+    t.ClearTextOnFocus = false
+    t.PlaceholderText = ph
+    t.Parent = body
+    Instance.new("UICorner", t).CornerRadius = UDim.new(0, 6)
+    return t
+end
 
-local listBtn    = mkBtn("列出建筑", 200, 90)
-local destroyBtn = mkBtn("销毁", 200, 90)
-listBtn.Position = UDim2.new(0, 8, 0, 200)
-destroyBtn.Position = UDim2.new(1, -98, 0, 200)
+local toggleBtn = mkBtn("已关闭", 34)
+local doorGlassBtn = mkBtn("拆门玻璃: 关", 70)
+local highlightBtn = mkBtn("高亮: 开", 106)
+local rangeBox  = mkBox(142, "范围(0=全图, 米)")
+rangeBox.Text = tostring(CFG.range)
+local speedBox  = mkBox(176, "拆除速度(0~10秒)")
+speedBox.Text = tostring(CFG.speed)
+
+local listBtn    = mkBtn("列出建筑", 210, 90)
+local destroyBtn = mkBtn("销毁", 210, 90)
+listBtn.Position = UDim2.new(0, 8, 0, 174)
+destroyBtn.Position = UDim2.new(1, -98, 0, 174)
 destroyBtn.BackgroundColor3 = Color3.fromRGB(140, 40, 40)
 
 local function setStatus(t) status.Text = t end
+
+-- ==================== 折叠逻辑 ====================
+local collapsed = false
+foldBtn.Activated:Connect(function()
+    collapsed = not collapsed
+    body.Visible = not collapsed
+    foldBtn.Text = collapsed and "▸" or "▾"
+    frame.Size = collapsed and UDim2.new(0, 200, 0, 28) or UDim2.new(0, 200, 0, 268)
+end)
 
 -- ==================== 按钮逻辑 ====================
 toggleBtn.Activated:Connect(function()
@@ -383,21 +398,35 @@ toggleBtn.Activated:Connect(function()
     end
 end)
 
-teamBtn.Activated:Connect(function()
-    CFG.teamFilter = not CFG.teamFilter
-    teamBtn.Text = "阵营检测: " .. (CFG.teamFilter and "开" or "关")
-end)
-
 doorGlassBtn.Activated:Connect(function()
     CFG.allowDoorGlass = not CFG.allowDoorGlass
     doorGlassBtn.Text = "拆门玻璃: " .. (CFG.allowDoorGlass and "开" or "关")
+    if not CFG.allowDoorGlass then glassHitOnce = {} end   -- 关掉时清空"已拆一次"记录
+end)
+
+highlightBtn.Activated:Connect(function()
+    CFG.highlight = not CFG.highlight
+    highlightBtn.Text = "高亮: " .. (CFG.highlight and "开" or "关")
+    if not CFG.highlight and hlBox then
+        pcall(function() hlBox:Destroy() end); hlBox = nil
+    end
 end)
 
 rangeBox.FocusLost:Connect(function()
     local v = tonumber(rangeBox.Text)
     CFG.range = (v and v >= 0) and v or 0
     rangeBox.Text = tostring(CFG.range)
-    setStatus(CFG.range > 0 and ("距离限制: " .. CFG.range .. "m") or "距离: 全图")
+    setStatus(CFG.range > 0 and ("范围: " .. CFG.range .. "m") or "范围: 全图")
+end)
+
+speedBox.FocusLost:Connect(function()
+    local v = tonumber(speedBox.Text)
+    if v == nil then v = CFG.speed end
+    if v < 0 then v = 0 end
+    if v > 10 then v = 10 end
+    CFG.speed = v
+    speedBox.Text = tostring(v)
+    setStatus("拆除速度: " .. v .. " 秒/轮")
 end)
 
 listBtn.Activated:Connect(function()
@@ -430,7 +459,7 @@ local lastTime = 0
 RunService.Heartbeat:Connect(function()
     if not ENABLED then return end
     local now = os.clock()
-    if now - lastTime < CFG.interval then return end
+    if now - lastTime < CFG.speed then return end
     lastTime = now
 
     local char = lp.Character
@@ -452,19 +481,38 @@ RunService.Heartbeat:Connect(function()
         return
     end
 
-    -- 对所有合法目标同时发伤害(隔空)；hitsPerTick 控制单座连击加速
+    -- 对所有合法目标同时发伤害(隔空)
+    --  普通建筑 + 门(非无敌)：每轮连击 hitsPerTick 次, 持续拆到倒
+    --  玻璃类(框架无敌)：只拆一次就标记跳过、跳到下一个目标, 不空耗连击
     for i = 1, #list do
         local t = list[i]
         if t.centre and t.centre.Parent then
-            for _ = 1, CFG.hitsPerTick do
-                pcall(function()
-                    RequestDamage:FireServer(t.centre, t.pos, w, "Melee", nil, hf)
-                end)
+            local isGlass = nameHas(t.name, CFG.glassWords)
+            if isGlass then
+                if not glassHitOnce[t.centre] then
+                    pcall(function()
+                        RequestDamage:FireServer(t.centre, t.pos, w, "Melee", nil, hf)
+                    end)
+                    glassHitOnce[t.centre] = true   -- 标记: 只拆一次就跳走
+                end
+            else
+                for _ = 1, CFG.hitsPerTick do
+                    pcall(function()
+                        RequestDamage:FireServer(t.centre, t.pos, w, "Melee", nil, hf)
+                    end)
+                end
             end
         end
     end
+    -- 高亮：选最近且【非门/非窗】的建筑标记(门/窗不在高亮里)
+    local hlTarget = nil
+    for i = 1, #list do
+        if not nameHas(list[i].name, CFG.noHLWords) then
+            hlTarget = list[i]; break
+        end
+    end
+    setHighlight(hlTarget)
     local nearest = list[1]
-    setHighlight(nearest)
     setStatus(("拆(%s): %d 个 | 最近 %s (%.0fm)"):format(wname, #list, nearest.name, nearest.dist))
     task.spawn(function() pcall(playSwing, wname) end)  -- 视觉动画异步播
 end)
