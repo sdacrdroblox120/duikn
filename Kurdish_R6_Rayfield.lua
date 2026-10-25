@@ -4453,7 +4453,7 @@ _g._KurdishR6Loaded = true
 -- 动画数据表：{ 显示名, 动画ID, 是否循环, 循环速度, 是否R15 }
 -- 数据完全沿用 Kurdish-R6-Animation 原表的 ID 与逻辑
 local animations = {
-	-- ===== R6 =====
+	-- ===== R6（沿用 Kurdish-R6-Animation 原表，含循环动画包与离散动作）=====
 	{"抛头",    "35154961",  true,  1,    false},
 	{"漂浮脑袋", "121572214", false, 1,    false},
 	{"蹲下",        "182724289", false, 1,    false},
@@ -4535,19 +4535,6 @@ local animations = {
 	{"僵尸步经典", "616163351", true, 1,  false},
 	{"潮酷待机",     "616136790", true,  1,    false},
 	{"自信站姿", "251019134", true,  1,    false},
-	-- ===== R15 =====
-	{"疯狂劈砍",    "674871189", true,  1,    true},
-	{"张臂展开",          "582855105", true,  1,    true},
-	{"旋转(15)",   "754658275", true,  1,    true},
-	{"双臂张开",       "582384156", true,  1,    true},
-	{"漂浮劈砍",    "717879555", true,  1,    true},
-	{"怪异僵尸",   "708553116", true,  1,    true},
-	{"下劈",     "746398327", true,  1,    true},
-	{"拉拽",          "675025795", true,  1,    true},
-	{"环形摆臂",     "698251653", true,  1,    true},
-	{"弯曲",          "696096087", true,  1,    true},
-	{"旋转劈砍",   "675025570", true,  1,    true},
-	{"甩臂",     "754656200", true,  10,   true},
 }
 
 -- 每项状态：{ track, toggle, isLoop, speed, loopOn }
@@ -4558,7 +4545,7 @@ local currentHumanoid = nil
 local Window = Rayfield:CreateWindow({
 	Name = "R6 / R15 动画中心",
 	LoadingTitle = "加载中…",
-	LoadingSubtitle = "by You",
+	LoadingSubtitle = "By 豆包AI",
 	Theme = "Default",
 	ConfigurationSaving = { Enabled = false },
 	Discord = { Enabled = false },
@@ -4566,7 +4553,7 @@ local Window = Rayfield:CreateWindow({
 })
 
 local TabR6  = Window:CreateTab("R6 动画", 4483362458)
-local TabR15 = Window:CreateTab("R15 动画", 4483362458)
+local TabFunc = Window:CreateTab("功能", 4483362458)
 local TabSys = Window:CreateTab("系统", 4483362458)
 
 -- 依据当前 humanoid 重建所有动画轨道
@@ -4613,7 +4600,7 @@ end
 -- 按骨骼类型创建开关（只建一次）
 local function createToggles()
 	for i, data in ipairs(animations) do
-		local tab = data[5] and TabR15 or TabR6
+		local tab = TabR6
 		local toggle = tab:CreateToggle({
 			Name = data[1],
 			CurrentValue = false,
@@ -4700,8 +4687,345 @@ TabSys:CreateParagraph({
 TabSys:CreateSection("说明")
 TabSys:CreateParagraph({
 	Title = "使用说明",
-	Content = "R6 / R15 分页：点开关 = 播放，再点 = 停止。\n角色重生后会自动重建动画轨道；也可手动点“重生并重置脚本”。",
+	Content = "三个分区：『R6 动作』放动画开关（点 = 播放，再点 = 停止）；『功能』放踢人与视角/旋转；『系统』放重建轨道与重生。\n角色重生后会自动重建动画轨道；也可手动点“重生并重置脚本”。",
 })
+
+-- ===================== 踢人模块（投票踢 + 自动循环踢，跳过好友） =====================
+-- 取自 EGG 防踢分区：仅投票踢人 / 自动循环踢人 / 好友判断。
+-- 未搬：反踢护盾、踢出提示音、白名单、管理员检测。好友逻辑常开，自动间隔固定 0.1s。
+
+local RS = game:GetService("ReplicatedStorage")
+local friendSet, friendLoaded = {}, false
+local voteCooldown, voteBoard, kickExclude = {}, {}, {}
+local pendingVote, autoKickLoop, voteListenerConn = nil, nil, nil
+local lastKickNotify = {}
+local AUTO_INTERVAL = 0.1
+local VOTE_COOLDOWN = 30
+local VOTEKICK = {
+	InvokePath = {"Requests", "RequestVoteKick"},
+	SignalPath = {"SelectiveReplication", "VoteKick"},
+}
+
+local function notifyKick(title, content)
+	local key = string.lower(tostring(content))
+	local now = os.clock()
+	if lastKickNotify[key] and (now - lastKickNotify[key]) < 1.0 then return end
+	lastKickNotify[key] = now
+	pcall(function()
+		Rayfield:Notify({ Title = title, Content = content, Duration = 3 })
+	end)
+end
+
+local function loadFriends()
+	friendSet, friendLoaded = {}, false
+	task.spawn(function()
+		local ok, pages = pcall(function() return Players:GetFriendsAsync(plr.UserId) end)
+		if not ok or not pages then
+			ok, pages = pcall(function() return game.Players:GetFriendsAsync(plr.UserId) end)
+		end
+		if not ok or not pages then friendLoaded = true; return end
+		local count = 0
+		while true do
+			local items = pages:GetCurrentPage()
+			for _, item in ipairs(items) do
+				if item.Username then friendSet[string.lower(item.Username)] = true; count = count + 1 end
+				if item.DisplayName then friendSet[string.lower(item.DisplayName)] = true end
+			end
+			if pages.IsFinished then break end
+			if not pcall(function() pages:AdvanceToNextPageAsync() end) then break end
+		end
+		friendLoaded = true
+	end)
+end
+
+local function isFriend(player)
+	if not player or player == plr then return true end
+	local name = string.lower(player.Name)
+	local disp = string.lower(player.DisplayName or "")
+	if friendSet[name] or (disp ~= "" and friendSet[disp]) then return true end
+	if not friendLoaded then
+		local ok, res = pcall(function() return plr:IsFriendsWith(player.UserId) end)
+		if ok and res then return true end
+	end
+	return false
+end
+
+local function getVoteFunc()
+	local cur = RS
+	for _, seg in ipairs(VOTEKICK.InvokePath) do
+		cur = cur and cur:FindFirstChild(seg)
+		if not cur then return nil end
+	end
+	return cur
+end
+
+local function getVoteEvent()
+	local cur = RS
+	for _, seg in ipairs(VOTEKICK.SignalPath) do
+		cur = cur and cur:FindFirstChild(seg)
+		if not cur then return nil end
+	end
+	return cur
+end
+
+local function canVoteNow(target)
+	if not target then return false, "目标无效" end
+	local key = string.lower(target.Name)
+	local last = voteCooldown[key]
+	if last then
+		local left = VOTE_COOLDOWN - (os.clock() - last)
+		if left > 0 then return false, string.format("冷却中 (%.0f 秒)", left) end
+	end
+	local board = voteBoard[key]
+	if board and board.threshold and board.threshold > 0 and board.votes and board.votes >= board.threshold then
+		return false, "票数已满"
+	end
+	return true, ""
+end
+
+local function recordVote(target)
+	if not target then return end
+	voteCooldown[string.lower(target.Name)] = os.clock()
+	pendingVote = nil
+end
+
+local function interpretVoteResult(res)
+	if res == nil then return true, "" end
+	if type(res) == "boolean" then return res, res and "" or "服务端拒绝" end
+	if type(res) == "string" then
+		local low = string.lower(res)
+		local bad = string.find(low, "cool", 1, true) or string.find(low, "冷却", 1, true)
+			or string.find(low, "wait", 1, true) or string.find(low, "fail", 1, true)
+			or string.find(low, "error", 1, true) or string.find(low, "denied", 1, true)
+			or string.find(low, "invalid", 1, true) or string.find(low, "already", 1, true)
+			or string.find(low, "不能", 1, true) or string.find(low, "失败", 1, true)
+		if bad then return false, res end
+		if res == "" or low == "ok" or low == "success" or low == "true" then return true, "" end
+		return true, ""
+	end
+	if type(res) == "table" then
+		if res.success ~= nil then return res.success == true, tostring(res.message or res.error or "") end
+		if res.ok ~= nil then return res.ok == true, tostring(res.error or "") end
+		if res.accepted ~= nil then return res.accepted == true, tostring(res.reason or "") end
+		if res.error ~= nil then return false, tostring(res.error) end
+		return true, ""
+	end
+	return true, ""
+end
+
+local function voteKick(target)
+	if not target or target == plr then return false end
+	if isFriend(target) then
+		notifyKick("已跳过", target.Name .. " 是你好友")
+		return false
+	end
+	local ok, why = canVoteNow(target)
+	if not ok then return false, why end
+	local voteFunc = getVoteFunc()
+	if voteFunc and voteFunc:IsA("RemoteFunction") then
+		local callOk, res = pcall(function() return voteFunc:InvokeServer(target.Name) end)
+		if callOk then
+			local accepted, err = interpretVoteResult(res)
+			if accepted then
+				notifyKick("已投票", "投票踢 -- " .. target.Name)
+				recordVote(target)
+				return true
+			else
+				return false, err
+			end
+		end
+	end
+	local voteEvent = getVoteEvent()
+	if voteEvent and voteEvent:IsA("RemoteEvent") then
+		local sendOk = pcall(function() voteEvent:FireServer(target.Name) end)
+		if sendOk then
+			pendingVote = { name = target.Name, at = os.clock() }
+			local waited = 0
+			while waited < 1.5 do
+				task.wait(0.1)
+				waited = waited + 0.1
+				if not pendingVote then
+					notifyKick("已投票", "投票踢 -- " .. target.Name)
+					recordVote(target)
+					return true
+				end
+			end
+			pendingVote = nil
+			return false, "no-confirm"
+		end
+	end
+	notifyKick("接口异常", "未找到投票接口")
+	return false, "no-interface"
+end
+
+local function getTargets()
+	local list = {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= plr and not isFriend(p) then table.insert(list, p) end
+	end
+	return list
+end
+
+local function pickKickTarget()
+	local all = getTargets()
+	if #all == 0 then return nil end
+	local fresh = {}
+	for _, p in ipairs(all) do
+		local key = string.lower(p.Name)
+		if not voteCooldown[key] and not kickExclude[key] then table.insert(fresh, p) end
+	end
+	local pool = (#fresh > 0) and fresh or all
+	return pool[math.random(1, #pool)]
+end
+
+local function startAutoKick()
+	if autoKickLoop then return end
+	autoKickLoop = task.spawn(function()
+		while autoKickLoop do
+			local t = pickKickTarget()
+			if t then voteKick(t) end
+			task.wait(AUTO_INTERVAL)
+		end
+	end)
+end
+
+local function stopAutoKick()
+	autoKickLoop = nil
+end
+
+local function startVoteListener()
+	if voteListenerConn then return end
+	local voteEvent = getVoteEvent()
+	if not voteEvent or not voteEvent:IsA("RemoteEvent") then
+		task.delay(2, function() if not voteListenerConn then startVoteListener() end end)
+		return
+	end
+	voteListenerConn = voteEvent.OnClientEvent:Connect(function(action, _, target, votes, threshold)
+		if not action then return end
+		if action == "Call" or action == "Start" then
+			if not target then return end
+			local name = target.Name
+			voteBoard[string.lower(name)] = { votes = votes or 0, threshold = threshold or 0 }
+			if pendingVote and string.lower(pendingVote.name) == string.lower(name) then pendingVote = nil end
+			if threshold and votes and votes >= threshold then kickExclude[name] = os.clock() + 9999 end
+		elseif action == "End" or action == "Cancel" or action == "Finish" then
+			local n = target and target.Name
+			if n then
+				voteBoard[string.lower(n)] = nil
+				if kickExclude[n] and kickExclude[n] > os.clock() + 9000 then kickExclude[n] = os.clock() + 8 end
+			end
+		end
+	end)
+end
+
+loadFriends()
+startVoteListener()
+
+TabFunc:CreateSection("踢人（自动跳过好友）")
+TabFunc:CreateToggle({
+	Name = "自动循环踢人",
+	CurrentValue = false,
+	Callback = function(v)
+		if v then startAutoKick() else stopAutoKick() end
+	end,
+})
+TabFunc:CreateButton({
+	Name = "投票踢随机一人",
+	Callback = function()
+		local t = pickKickTarget()
+		if t then voteKick(t) else notifyKick("无目标", "当前没有可踢的非好友玩家") end
+	end,
+})
+TabFunc:CreateParagraph({
+	Title = "说明",
+	Content = "仅投票踢人 + 自动循环踢（间隔固定 0.1s，不可调）。\n永远跳过 Roblox 好友，不会误踢好友。\n未包含反踢护盾 / 提示音 / 白名单。",
+})
+
+-- ===================== 视角 / 旋转（取自 prometheus：超广角FOV + 角色旋转） =====================
+local RunService = game:GetService("RunService")
+local camera = workspace.CurrentCamera
+
+local fovOn, fovValue, savedFov = false, 120, 70
+local fovConn = nil
+local function updateFOV()
+	if fovOn then
+		if not fovConn then
+			savedFov = camera.FieldOfView
+			fovConn = RunService.RenderStepped:Connect(function()
+				if fovOn then camera.FieldOfView = fovValue end
+			end)
+		end
+		camera.FieldOfView = fovValue
+	else
+		if fovConn then fovConn:Disconnect(); fovConn = nil end
+		camera.FieldOfView = savedFov or 70
+	end
+end
+
+local spinOn, spinV, spinAngle = false, 100, 0
+local spinConn = nil
+local function spinStep(dt)
+	if not spinOn or spinV <= 0 then return end
+	local char = plr.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hrp or not hum then return end
+	hum.AutoRotate = false
+	spinAngle = spinAngle + math.rad(spinV * dt)
+	local look = camera.CFrame.LookVector
+	local unit = Vector3.new(look.X, 0, look.Z).Unit
+	if unit.Magnitude < 0.001 then unit = Vector3.new(1, 0, 0) end
+	local cf = CFrame.new(hrp.Position, hrp.Position + unit)
+	local cf2 = CFrame.Angles(0, spinAngle, 0)
+	hrp.CFrame = CFrame.new(hrp.Position) * (cf * cf2).Rotation
+end
+local function updateSpin()
+	if spinOn then
+		if not spinConn then spinConn = RunService.Heartbeat:Connect(spinStep) end
+	else
+		if spinConn then spinConn:Disconnect(); spinConn = nil end
+		local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum.AutoRotate = true end
+		spinAngle = 0
+	end
+end
+
+local function clampNum(text, min, max, fallback)
+	local n = tonumber(text)
+	if not n then n = fallback end
+	return math.clamp(math.floor(n + 0.5), min, max)
+end
+
+TabFunc:CreateSection("视角 / 旋转")
+TabFunc:CreateToggle({
+	Name = "POV(超广角)",
+	CurrentValue = false,
+	Callback = function(v) fovOn = v; updateFOV() end,
+})
+TabFunc:CreateInput({
+	Name = "FOV角度",
+	CurrentValue = "120",
+	PlaceholderText = "0~180",
+	Callback = function(t)
+		fovValue = clampNum(t, 0, 180, 120)
+		if fovOn then camera.FieldOfView = fovValue end
+	end,
+})
+TabFunc:CreateToggle({
+	Name = "旋转",
+	CurrentValue = false,
+	Callback = function(v) spinOn = v; updateSpin() end,
+})
+TabFunc:CreateInput({
+	Name = "旋转速度",
+	CurrentValue = "100",
+	PlaceholderText = "1~5000",
+	Callback = function(t)
+		spinV = clampNum(t, 1, 5000, 100)
+	end,
+})
+updateFOV()
+updateSpin()
 
 -- 角色初始化 / 重生自动重建轨道
 local function onChar(char)
@@ -4717,6 +5041,6 @@ plr.CharacterAdded:Connect(onChar)
 
 Rayfield:Notify({
 	Title = "已加载",
-	Content = "R6/R15 动画中心就绪（Rayfield · 离线版）。",
+	Content = "社敬周顺义",
 	Duration = 4,
 })
